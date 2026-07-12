@@ -2,7 +2,7 @@ import AppKit
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    private let model = AppModel(service: LocalNetworkPetInteractionService())
+    private let model = AppModel(service: PublicPetInteractionService())
     private var panelController: PetPanelController!
     private var statusItem: NSStatusItem!
     private var visibilityItem: NSMenuItem!
@@ -23,6 +23,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.model.unpair()
         } onScaleChange: { [weak self] scale in
             self?.model.setPetScale(scale)
+        } onCreatePublicPairing: { [weak self] in
+            Task {
+                guard let self else { return }
+                let code = await self.model.createPublicPairing()
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(code, forType: .string)
+            }
+        } onJoinPublicPairing: { [weak self] in
+            guard let code = NSPasteboard.general.string(forType: .string) else { return }
+            Task { await self?.model.joinPublicPairing(code: code) }
         }
         model.onStateChange = { [weak self] in self?.renderPet() }
         model.onPeersChange = { [weak self] in self?.renderPet() }

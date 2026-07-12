@@ -71,6 +71,27 @@ final class AppModel {
         onPeersChange?()
     }
 
+    func createPublicPairing() async -> String {
+        let code = UUID().uuidString.replacingOccurrences(of: "-", with: "") + UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        pairedFriend = PetPeer(id: code, name: "等待朋友加入")
+        await service.pair(room: code, name: Host.current().localizedName ?? "我")
+        onPeersChange?()
+        setState(text: "配对码已复制，发给朋友", emotion: .happy, frameName: activeFrameName)
+        return code
+    }
+
+    func joinPublicPairing(code: String) async {
+        let normalized = code.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        guard normalized.range(of: "^[0-9a-f]{64}$", options: .regularExpression) != nil else {
+            setState(text: "配对码格式不正确", emotion: .idle, frameName: activeFrameName)
+            return
+        }
+        pairedFriend = PetPeer(id: normalized, name: "公网朋友")
+        await service.pair(room: normalized, name: Host.current().localizedName ?? "我")
+        onPeersChange?()
+        setState(text: "已加入配对，等待朋友互动", emotion: .happy, frameName: activeFrameName)
+    }
+
     func setPetScale(_ scale: PetScale) {
         petScale = scale
         defaults.set(Double(scale.rawValue), forKey: "com.macpet.pet-scale")
@@ -89,6 +110,10 @@ final class AppModel {
     }
 
     private func receive(_ event: PetEvent) {
+        if pairedFriend?.name == "等待朋友加入" || pairedFriend?.name == "公网朋友" {
+            pairedFriend = PetPeer(id: pairedFriend!.id, name: event.senderName)
+            onPeersChange?()
+        }
         let frameName = BuddyFrames.names.contains(event.frameName) ? event.frameName : event.kind.defaultFrameName
         setState(text: "\(event.senderName)\(event.kind.incomingText)", emotion: .happy, frameName: frameName)
     }

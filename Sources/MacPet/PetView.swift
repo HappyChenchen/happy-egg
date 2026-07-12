@@ -16,6 +16,8 @@ final class PetView: NSView {
     var onPair: ((PetPeer) -> Void)?
     var onUnpair: (() -> Void)?
     var onScaleChange: ((PetScale) -> Void)?
+    var onCreatePublicPairing: (() -> Void)?
+    var onJoinPublicPairing: (() -> Void)?
     var nearbyPeers: [PetPeer] = []
     var pairedFriend: PetPeer?
     private var bubbleText: String?
@@ -54,20 +56,10 @@ final class PetView: NSView {
             menu.addItem(pairedItem)
             menu.addItem(withTitle: "取消配对", action: #selector(unpair), keyEquivalent: "")
         } else {
-            let pairingItem = NSMenuItem(title: "配对附近宠物", action: nil, keyEquivalent: "")
+            let pairingItem = NSMenuItem(title: "公网配对", action: nil, keyEquivalent: "")
             let pairingMenu = NSMenu()
-            if nearbyPeers.isEmpty {
-                let searchingItem = NSMenuItem(title: "正在寻找附近的 MacPet…", action: nil, keyEquivalent: "")
-                searchingItem.isEnabled = false
-                pairingMenu.addItem(searchingItem)
-            } else {
-                for peer in nearbyPeers {
-                    let item = NSMenuItem(title: peer.name, action: #selector(pairPeer(_:)), keyEquivalent: "")
-                    item.representedObject = peer.id
-                    item.target = self
-                    pairingMenu.addItem(item)
-                }
-            }
+            pairingMenu.addItem(withTitle: "创建配对码（复制）", action: #selector(createPublicPairing), keyEquivalent: "")
+            pairingMenu.addItem(withTitle: "从剪贴板加入配对", action: #selector(joinPublicPairing), keyEquivalent: "")
             pairingItem.submenu = pairingMenu
             menu.addItem(pairingItem)
         }
@@ -155,4 +147,7 @@ final class PetView: NSView {
         guard scales.indices.contains(sender.tag) else { return }
         onScaleChange?(scales[sender.tag])
     }
+
+    @objc private func createPublicPairing() { onCreatePublicPairing?() }
+    @objc private func joinPublicPairing() { onJoinPublicPairing?() }
 }

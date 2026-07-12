@@ -3,6 +3,7 @@ import Network
 
 protocol PetInteractionService: Sendable {
     func availablePeers() async -> [PetPeer]
+    func pair(room: String, name: String) async
     func send(_ event: PetEvent, to peerID: String) async
     func incomingEvents() async -> AsyncStream<PetEvent>
 }
@@ -28,6 +29,8 @@ actor LocalPetInteractionService: PetInteractionService {
     func availablePeers() async -> [PetPeer] {
         peers
     }
+
+    func pair(room: String, name: String) async {}
 
     func setPeers(_ peers: [PetPeer]) {
         self.peers = peers
@@ -127,6 +130,8 @@ final class LocalNetworkPetInteractionService: @unchecked Sendable, PetInteracti
         }
     }
 
+    func pair(room: String, name: String) async {}
+
     func send(_ event: PetEvent, to peerID: String) async {
         let envelope = Envelope(senderID: deviceID, senderName: deviceName, kind: event.kind, frameName: event.frameName)
         guard let data = try? JSONEncoder().encode(envelope) else { return }
@@ -174,5 +179,61 @@ final class LocalNetworkPetInteractionService: @unchecked Sendable, PetInteracti
         while encoded.count % 4 != 0 { encoded.append("=") }
         guard let data = Data(base64Encoded: encoded), let displayName = String(data: data, encoding: .utf8), !displayName.isEmpty else { return nil }
         return PetPeer(id: String(components[1]), name: displayName)
+    }
+}
+
+/// Public, server-mediated transport for friends who are not on the same Wi-Fi.
+final class PublicPetInteractionService: @unchecked Sendable, PetInteractionService {
+    private let endpoint = URL(string: "wss://happypuppy.io/ws")!
+    private let deviceName = Host.current().localizedName ?? "一位朋友"
+    private let stream: AsyncStream<PetEvent>
+    private let continuation: AsyncStream<PetEvent>.Continuation
+    private var task: URLSessionWebSocketTask?
+
+    init() {
+        var savedContinuation: AsyncStream<PetEvent>.Continuation!
+        stream = AsyncStream { savedContinuation = $0 }
+        continuation = savedContinuation
+    }
+
+    deinit { task?.cancel(with: .goingAway, reason: nil); continuation.finish() }
+
+    func availablePeers() async -> [PetPeer] { [] }
+
+    func incomingEvents() async -> AsyncStream<PetEvent> { stream }
+
+    func pair(room: String, name: String) async {
+        task?.cancel(with: .goingAway, reason: nil)
+        let task = URLSession.shared.webSocketTask(with: endpoint)
+        self.task = task
+        task.resume()
+        await sendJSON(["type": "join", "room": room, "name": name], through: task)
+        receive(on: task)
+    }
+
+    func send(_ event: PetEvent, to peerID: String) async {
+        await sendJSON(["type": "event", "kind": event.kind.rawValue, "frameName": event.frameName], through: task)
+    }
+
+    private func sendJSON(_ object: [String: String], through task: URLSessionWebSocketTask?) async {
+        guard let task, let data = try? JSONSerialization.data(withJSONObject: object), let text = String(data: data, encoding: .utf8) else { return }
+        try? await task.send(.string(text))
+    }
+
+    private func receive(on task: URLSessionWebSocketTask) {
+        task.receive { [weak self] result in
+            guard let self else { return }
+            if case let .success(.string(text)) = result,
+               let data = text.data(using: .utf8),
+               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               json["type"] as? String == "event",
+               let kindText = json["kind"] as? String,
+               let kind = PetEvent.Kind(rawValue: kindText),
+               let frame = json["frameName"] as? String,
+               let sender = json["senderName"] as? String {
+                self.continuation.yield(PetEvent(kind: kind, senderName: sender, frameName: frame))
+            }
+            if case .success = result { self.receive(on: task) }
+        }
     }
 }

@@ -13,7 +13,9 @@ final class PetPanelController {
         onQuit: @escaping () -> Void,
         onPair: @escaping (PetPeer) -> Void,
         onUnpair: @escaping () -> Void,
-        onScaleChange: @escaping (PetScale) -> Void
+        onScaleChange: @escaping (PetScale) -> Void,
+        onCreatePublicPairing: @escaping () -> Void,
+        onJoinPublicPairing: @escaping () -> Void
     ) {
         petView = PetView(frame: NSRect(x: 0, y: 0, width: 220, height: 250))
         petView.onPoke = onPoke
@@ -23,6 +25,8 @@ final class PetPanelController {
         petView.onPair = onPair
         petView.onUnpair = onUnpair
         petView.onScaleChange = onScaleChange
+        petView.onCreatePublicPairing = onCreatePublicPairing
+        petView.onJoinPublicPairing = onJoinPublicPairing
         panel = NSPanel(
             contentRect: NSRect(x: 140, y: 140, width: 220, height: 250),
             styleMask: [.borderless, .nonactivatingPanel],
