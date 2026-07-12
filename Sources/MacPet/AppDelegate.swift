@@ -91,9 +91,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             bundle = .module
         }
         guard let url = bundle.url(forResource: "ai_buddy_05", withExtension: "png"), let image = NSImage(contentsOf: url) else { return nil }
-        image.size = NSSize(width: 18, height: 18)
-        image.isTemplate = false
-        return image
+        let icon = NSImage(size: NSSize(width: 18, height: 18))
+        icon.lockFocus()
+        image.draw(
+            in: NSRect(x: 0, y: 0, width: 18, height: 18),
+            from: NSRect(x: 70, y: 100, width: 280, height: 280),
+            operation: .sourceOver,
+            fraction: 1,
+            respectFlipped: true,
+            hints: nil
+        )
+        icon.unlockFocus()
+        icon.isTemplate = false
+        return icon
     }
     @objc private func quit() { NSApplication.shared.terminate(nil) }
 }
