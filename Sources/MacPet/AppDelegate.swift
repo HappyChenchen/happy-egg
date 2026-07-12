@@ -5,6 +5,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let model = AppModel(service: LocalNetworkPetInteractionService())
     private var panelController: PetPanelController!
     private var statusItem: NSStatusItem!
+    private var visibilityItem: NSMenuItem!
+    private var isPetVisible = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         panelController = PetPanelController { [weak self] frameName in
@@ -12,7 +14,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } onSendAction: { [weak self] kind in
             Task { await self?.model.sendInteraction(kind: kind) }
         } onHide: { [weak self] in
-            self?.panelController.hide()
+            self?.hidePet()
         } onQuit: {
             NSApplication.shared.terminate(nil)
         } onPair: { [weak self] peer in
@@ -27,7 +29,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         model.onScaleChange = { [weak self] in self?.panelController.setPetScale(self?.model.petScale ?? .normal) }
         renderPet()
         panelController.setPetScale(model.petScale)
-        panelController.show()
+        showPet()
         model.startListening()
         model.startRefreshingPeers()
         configureMenuBar()
@@ -43,8 +45,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         networkItem.isEnabled = false
         menu.addItem(networkItem)
         menu.addItem(withTitle: "拍一拍朋友", action: #selector(pokeFriend), keyEquivalent: "p")
-        menu.addItem(withTitle: "显示宠物", action: #selector(showPet), keyEquivalent: "")
-        menu.addItem(withTitle: "隐藏宠物", action: #selector(hidePet), keyEquivalent: "")
+        visibilityItem = menu.addItem(withTitle: "隐藏宠物", action: #selector(togglePetVisibility), keyEquivalent: "")
         menu.addItem(NSMenuItem.separator())
         menu.addItem(withTitle: "退出 MacPet", action: #selector(quit), keyEquivalent: "q")
         menu.items.forEach { $0.target = self }
@@ -62,7 +63,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func pokeFriend() { Task { await model.sendInteraction(kind: .poke) } }
-    @objc private func showPet() { panelController.show() }
-    @objc private func hidePet() { panelController.hide() }
+    private func showPet() {
+        panelController.show()
+        isPetVisible = true
+        updateVisibilityItem()
+    }
+
+    private func hidePet() {
+        panelController.hide()
+        isPetVisible = false
+        updateVisibilityItem()
+    }
+
+    private func updateVisibilityItem() {
+        visibilityItem?.title = isPetVisible ? "隐藏宠物" : "显示宠物"
+    }
+
+    @objc private func togglePetVisibility() {
+        isPetVisible ? hidePet() : showPet()
+    }
     @objc private func quit() { NSApplication.shared.terminate(nil) }
 }
