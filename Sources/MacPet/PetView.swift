@@ -72,9 +72,15 @@ final class PetView: NSView {
             menu.addItem(pairingItem)
         }
         menu.addItem(NSMenuItem.separator())
-        menu.addItem(withTitle: pairedFriend == nil ? "拍一拍（请先配对）" : "拍一拍 \(pairedFriend!.name)", action: #selector(pokeFriend), keyEquivalent: "")
-        menu.addItem(withTitle: "送一颗爱心", action: #selector(sendHeart), keyEquivalent: "")
-        menu.addItem(withTitle: "一起庆祝", action: #selector(celebrate), keyEquivalent: "")
+        if let pairedFriend {
+            menu.addItem(withTitle: "拍一拍 \(pairedFriend.name)", action: #selector(pokeFriend), keyEquivalent: "")
+            menu.addItem(withTitle: "送一颗爱心", action: #selector(sendHeart), keyEquivalent: "")
+            menu.addItem(withTitle: "一起庆祝", action: #selector(celebrate), keyEquivalent: "")
+        } else {
+            let hint = NSMenuItem(title: "配对后可发送互动", action: nil, keyEquivalent: "")
+            hint.isEnabled = false
+            menu.addItem(hint)
+        }
         menu.addItem(NSMenuItem.separator())
         let scaleItem = NSMenuItem(title: "宠物大小", action: nil, keyEquivalent: "")
         let scaleMenu = NSMenu()
