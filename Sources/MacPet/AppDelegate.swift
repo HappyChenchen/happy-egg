@@ -6,6 +6,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var panelController: PetPanelController!
     private var statusItem: NSStatusItem!
     private var visibilityItem: NSMenuItem!
+    private var pairingStatusItem: NSMenuItem!
+    private var interactionItem: NSMenuItem!
     private var isPetVisible = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -35,7 +37,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Task { await self?.model.joinPublicPairing(code: code) }
         }
         model.onStateChange = { [weak self] in self?.renderPet() }
-        model.onPeersChange = { [weak self] in self?.renderPet() }
+        model.onPeersChange = { [weak self] in self?.updateMenuState(); self?.renderPet() }
         model.onScaleChange = { [weak self] in self?.panelController.setPetScale(self?.model.petScale ?? .normal) }
         renderPet()
         panelController.setPetScale(model.petScale)
@@ -51,15 +53,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let menu = NSMenu()
         menu.addItem(withTitle: "我的宠物", action: nil, keyEquivalent: "")
         menu.addItem(NSMenuItem.separator())
-        let networkItem = NSMenuItem(title: "局域网模式：正在自动发现伙伴", action: nil, keyEquivalent: "")
-        networkItem.isEnabled = false
-        menu.addItem(networkItem)
-        menu.addItem(withTitle: "拍一拍朋友", action: #selector(pokeFriend), keyEquivalent: "p")
+        pairingStatusItem = NSMenuItem(title: "公网模式 · 尚未配对", action: nil, keyEquivalent: "")
+        pairingStatusItem.isEnabled = false
+        menu.addItem(pairingStatusItem)
+        interactionItem = menu.addItem(withTitle: "请先右键宠物配对", action: #selector(pokeFriend), keyEquivalent: "p")
         visibilityItem = menu.addItem(withTitle: "隐藏宠物", action: #selector(togglePetVisibility), keyEquivalent: "")
         menu.addItem(NSMenuItem.separator())
         menu.addItem(withTitle: "退出 MacPet", action: #selector(quit), keyEquivalent: "q")
         menu.items.forEach { $0.target = self }
         statusItem.menu = menu
+        updateMenuState()
     }
 
     private func renderPet() {
@@ -73,6 +76,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func pokeFriend() { Task { await model.sendInteraction(kind: .poke) } }
+
+    private func updateMenuState() {
+        if let friend = model.pairedFriend {
+            pairingStatusItem?.title = "已配对 · \(friend.name)"
+            interactionItem?.title = "拍一拍 \(friend.name)"
+            interactionItem?.isEnabled = true
+        } else {
+            pairingStatusItem?.title = "公网模式 · 尚未配对"
+            interactionItem?.title = "请先右键宠物配对"
+            interactionItem?.isEnabled = false
+        }
+    }
     private func showPet() {
         panelController.show()
         isPetVisible = true
