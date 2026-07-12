@@ -13,10 +13,16 @@ final class PetView: NSView {
     var onSendAction: ((PetEvent.Kind) -> Void)?
     var onHide: (() -> Void)?
     var onQuit: (() -> Void)?
+    var onPair: ((PetPeer) -> Void)?
+    var onUnpair: (() -> Void)?
+    var onScaleChange: ((PetScale) -> Void)?
+    var nearbyPeers: [PetPeer] = []
+    var pairedFriend: PetPeer?
     private var bubbleText: String?
     private var emotion: AppModel.Emotion = .idle
     private var frameIndex = BuddyFrames.initialIndex
     private var imageCache: [String: NSImage] = [:]
+    private var petScale: PetScale = .normal
 
     override var isFlipped: Bool { true }
 
@@ -29,6 +35,11 @@ final class PetView: NSView {
         needsDisplay = true
     }
 
+    func setPetScale(_ scale: PetScale) {
+        petScale = scale
+        needsDisplay = true
+    }
+
     override func mouseDown(with event: NSEvent) {
         frameIndex = BuddyFrames.nextIndex(after: frameIndex)
         needsDisplay = true
@@ -37,10 +48,45 @@ final class PetView: NSView {
 
     override func rightMouseDown(with event: NSEvent) {
         let menu = NSMenu()
-        menu.addItem(withTitle: "拍一拍朋友", action: #selector(pokeFriend), keyEquivalent: "")
+        if let pairedFriend {
+            let pairedItem = NSMenuItem(title: "已配对：\(pairedFriend.name)", action: nil, keyEquivalent: "")
+            pairedItem.isEnabled = false
+            menu.addItem(pairedItem)
+            menu.addItem(withTitle: "取消配对", action: #selector(unpair), keyEquivalent: "")
+        } else {
+            let pairingItem = NSMenuItem(title: "配对附近宠物", action: nil, keyEquivalent: "")
+            let pairingMenu = NSMenu()
+            if nearbyPeers.isEmpty {
+                let searchingItem = NSMenuItem(title: "正在寻找附近的 MacPet…", action: nil, keyEquivalent: "")
+                searchingItem.isEnabled = false
+                pairingMenu.addItem(searchingItem)
+            } else {
+                for peer in nearbyPeers {
+                    let item = NSMenuItem(title: peer.name, action: #selector(pairPeer(_:)), keyEquivalent: "")
+                    item.representedObject = peer.id
+                    item.target = self
+                    pairingMenu.addItem(item)
+                }
+            }
+            pairingItem.submenu = pairingMenu
+            menu.addItem(pairingItem)
+        }
+        menu.addItem(NSMenuItem.separator())
+        menu.addItem(withTitle: pairedFriend == nil ? "拍一拍（请先配对）" : "拍一拍 \(pairedFriend!.name)", action: #selector(pokeFriend), keyEquivalent: "")
         menu.addItem(withTitle: "送一颗爱心", action: #selector(sendHeart), keyEquivalent: "")
         menu.addItem(withTitle: "一起庆祝", action: #selector(celebrate), keyEquivalent: "")
         menu.addItem(NSMenuItem.separator())
+        let scaleItem = NSMenuItem(title: "宠物大小", action: nil, keyEquivalent: "")
+        let scaleMenu = NSMenu()
+        for scale in PetScale.allCases {
+            let item = NSMenuItem(title: scale.title, action: #selector(changeScale(_:)), keyEquivalent: "")
+            item.tag = PetScale.allCases.firstIndex(of: scale) ?? 0
+            item.state = scale == petScale ? .on : .off
+            item.target = self
+            scaleMenu.addItem(item)
+        }
+        scaleItem.submenu = scaleMenu
+        menu.addItem(scaleItem)
         menu.addItem(withTitle: "隐藏宠物", action: #selector(hidePet), keyEquivalent: "")
         menu.addItem(withTitle: "关闭 MacPet", action: #selector(quitApp), keyEquivalent: "")
         menu.items.forEach { $0.target = self }
@@ -65,10 +111,11 @@ final class PetView: NSView {
         guard let image = currentImage else { return }
         // Keep the character anchored while feedback appears. Only the speech
         // bubble and selected frame change, so a poke never looks like a jump.
-        let size: CGFloat = 202
+        let scale = petScale.rawValue
+        let size: CGFloat = 202 * scale
         let imageRect = NSRect(
             x: bounds.midX - size / 2,
-            y: 42,
+            y: 42 * scale,
             width: size,
             height: size
         )
@@ -89,4 +136,17 @@ final class PetView: NSView {
     @objc private func celebrate() { onSendAction?(.celebrate) }
     @objc private func hidePet() { onHide?() }
     @objc private func quitApp() { onQuit?() }
+    @objc private func unpair() { onUnpair?() }
+
+    @objc private func pairPeer(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String,
+              let peer = nearbyPeers.first(where: { $0.id == id }) else { return }
+        onPair?(peer)
+    }
+
+    @objc private func changeScale(_ sender: NSMenuItem) {
+        let scales = PetScale.allCases
+        guard scales.indices.contains(sender.tag) else { return }
+        onScaleChange?(scales[sender.tag])
+    }
 }

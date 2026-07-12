@@ -2,7 +2,8 @@ import Foundation
 import Network
 
 protocol PetInteractionService: Sendable {
-    func send(_ event: PetEvent) async
+    func availablePeers() async -> [PetPeer]
+    func send(_ event: PetEvent, to peerID: String) async
     func incomingEvents() async -> AsyncStream<PetEvent>
 }
 
@@ -11,6 +12,7 @@ actor LocalPetInteractionService: PetInteractionService {
     private let stream: AsyncStream<PetEvent>
     private let continuation: AsyncStream<PetEvent>.Continuation
     private let responseDelay: Duration
+    private var peers: [PetPeer] = []
 
     init(responseDelay: Duration = .milliseconds(850)) {
         var savedContinuation: AsyncStream<PetEvent>.Continuation!
@@ -23,9 +25,18 @@ actor LocalPetInteractionService: PetInteractionService {
         stream
     }
 
-    func send(_ event: PetEvent) async {
+    func availablePeers() async -> [PetPeer] {
+        peers
+    }
+
+    func setPeers(_ peers: [PetPeer]) {
+        self.peers = peers
+    }
+
+    func send(_ event: PetEvent, to peerID: String) async {
         try? await Task.sleep(for: responseDelay)
-        continuation.yield(PetEvent(kind: event.kind, senderName: "朋友", frameName: event.frameName))
+        let friendName = peers.first(where: { $0.id == peerID })?.name ?? "朋友"
+        continuation.yield(PetEvent(kind: event.kind, senderName: friendName, frameName: event.frameName))
     }
 
     func simulateIncomingPoke(from name: String) {
@@ -47,15 +58,22 @@ final class LocalNetworkPetInteractionService: @unchecked Sendable, PetInteracti
     }
 
     private let queue = DispatchQueue(label: "com.macpet.lan")
-    private let deviceID = UUID().uuidString
-    private let deviceName = Host.current().localizedName ?? "一位朋友"
+    private let deviceID: String
+    private let deviceName: String
     private let stream: AsyncStream<PetEvent>
     private let continuation: AsyncStream<PetEvent>.Continuation
     private let listener: NWListener?
     private let browser: NWBrowser
-    private var peers = Set<NWBrowser.Result>()
+    private var peers: [String: NWBrowser.Result] = [:]
 
     init() {
+        let defaults = UserDefaults.standard
+        let identityKey = "com.macpet.device-id"
+        let storedID = defaults.string(forKey: identityKey)
+        let generatedID = UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        deviceID = storedID ?? generatedID
+        if storedID == nil { defaults.set(generatedID, forKey: identityKey) }
+        deviceName = String((Host.current().localizedName ?? "一位朋友").prefix(6))
         var savedContinuation: AsyncStream<PetEvent>.Continuation!
         stream = AsyncStream { savedContinuation = $0 }
         continuation = savedContinuation
@@ -68,7 +86,7 @@ final class LocalNetworkPetInteractionService: @unchecked Sendable, PetInteracti
 
         if let listener = try? NWListener(using: parameters) {
             listener.service = NWListener.Service(
-                name: "MacPet-\(String(deviceID.prefix(6)))",
+                name: Self.serviceName(deviceID: deviceID, name: deviceName),
                 type: Self.serviceType
             )
             self.listener = listener
@@ -80,7 +98,11 @@ final class LocalNetworkPetInteractionService: @unchecked Sendable, PetInteracti
             self?.receive(on: connection)
         }
         browser.browseResultsChangedHandler = { [weak self] results, _ in
-            self?.peers = results
+            guard let self else { return }
+            self.peers = Dictionary(uniqueKeysWithValues: results.compactMap { result in
+                guard let peer = Self.peer(from: result.endpoint), peer.id != self.deviceID else { return nil }
+                return (peer.id, result)
+            })
         }
         listener?.start(queue: queue)
         browser.start(queue: queue)
@@ -96,14 +118,21 @@ final class LocalNetworkPetInteractionService: @unchecked Sendable, PetInteracti
         stream
     }
 
-    func send(_ event: PetEvent) async {
+    func availablePeers() async -> [PetPeer] {
+        await withCheckedContinuation { continuation in
+            queue.async { [weak self] in
+                let peers = self?.peers.values.compactMap { Self.peer(from: $0.endpoint) }.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending } ?? []
+                continuation.resume(returning: peers)
+            }
+        }
+    }
+
+    func send(_ event: PetEvent, to peerID: String) async {
         let envelope = Envelope(senderID: deviceID, senderName: deviceName, kind: event.kind, frameName: event.frameName)
         guard let data = try? JSONEncoder().encode(envelope) else { return }
         queue.async { [weak self] in
-            guard let self else { return }
-            for peer in self.peers {
-                self.send(data, to: peer.endpoint)
-            }
+            guard let self, let peer = self.peers[peerID] else { return }
+            self.send(data, to: peer.endpoint)
         }
     }
 
@@ -125,5 +154,25 @@ final class LocalNetworkPetInteractionService: @unchecked Sendable, PetInteracti
                   envelope.senderID != self.deviceID else { return }
             self.continuation.yield(PetEvent(kind: envelope.kind, senderName: envelope.senderName, frameName: envelope.frameName))
         }
+    }
+
+    private static func serviceName(deviceID: String, name: String) -> String {
+        let encoded = Data(name.utf8).base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
+        return "mp-\(deviceID)-\(encoded)"
+    }
+
+    private static func peer(from endpoint: NWEndpoint) -> PetPeer? {
+        guard case let .service(name, _, _, _) = endpoint else { return nil }
+        let components = name.split(separator: "-", maxSplits: 2, omittingEmptySubsequences: false)
+        guard components.count == 3, components[0] == "mp" else { return nil }
+        var encoded = String(components[2])
+            .replacingOccurrences(of: "-", with: "+")
+            .replacingOccurrences(of: "_", with: "/")
+        while encoded.count % 4 != 0 { encoded.append("=") }
+        guard let data = Data(base64Encoded: encoded), let displayName = String(data: data, encoding: .utf8), !displayName.isEmpty else { return nil }
+        return PetPeer(id: String(components[1]), name: displayName)
     }
 }

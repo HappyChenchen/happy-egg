@@ -9,18 +9,28 @@ final class AppModel {
 
     private let service: any PetInteractionService
     private var listeningTask: Task<Void, Never>?
+    private var peerRefreshTask: Task<Void, Never>?
+    private let defaults: UserDefaults
 
     private(set) var bubbleText: String?
     private(set) var emotion: Emotion = .idle
     private(set) var activeFrameName = BuddyFrames.names[BuddyFrames.initialIndex]
+    private(set) var nearbyPeers: [PetPeer] = []
+    private(set) var pairedFriend: PetPeer?
+    private(set) var petScale: PetScale
     var onStateChange: (() -> Void)?
+    var onPeersChange: (() -> Void)?
+    var onScaleChange: (() -> Void)?
 
-    init(service: any PetInteractionService) {
+    init(service: any PetInteractionService, defaults: UserDefaults = .standard) {
         self.service = service
+        self.defaults = defaults
+        petScale = PetScale(rawValue: defaults.object(forKey: "com.macpet.pet-scale") as? CGFloat ?? 1) ?? .normal
     }
 
     deinit {
         listeningTask?.cancel()
+        peerRefreshTask?.cancel()
     }
 
     func startListening() {
@@ -35,11 +45,47 @@ final class AppModel {
         }
     }
 
+    func startRefreshingPeers() {
+        guard peerRefreshTask == nil else { return }
+        peerRefreshTask = Task { [weak self] in
+            while !Task.isCancelled {
+                await self?.refreshPeers()
+                try? await Task.sleep(for: .seconds(1))
+            }
+        }
+    }
+
+    func refreshPeers() async {
+        nearbyPeers = await service.availablePeers()
+        onPeersChange?()
+    }
+
+    func pair(with peer: PetPeer) {
+        pairedFriend = peer
+        onPeersChange?()
+        setState(text: "已配对 \(peer.name)", emotion: .happy, frameName: activeFrameName)
+    }
+
+    func unpair() {
+        pairedFriend = nil
+        onPeersChange?()
+    }
+
+    func setPetScale(_ scale: PetScale) {
+        petScale = scale
+        defaults.set(Double(scale.rawValue), forKey: "com.macpet.pet-scale")
+        onScaleChange?()
+    }
+
     func sendInteraction(kind: PetEvent.Kind, frameName: String? = nil) async {
+        guard let pairedFriend else {
+            setState(text: "请先右键宠物，选择要配对的朋友", emotion: .idle, frameName: activeFrameName)
+            return
+        }
         let selectedFrame = frameName ?? kind.defaultFrameName
         let safeFrame = BuddyFrames.names.contains(selectedFrame) ? selectedFrame : kind.defaultFrameName
-        setState(text: kind.outgoingText, emotion: .happy, frameName: safeFrame)
-        await service.send(PetEvent(kind: kind, senderName: "我", frameName: safeFrame))
+        setState(text: outgoingText(for: kind, friendName: pairedFriend.name), emotion: .happy, frameName: safeFrame)
+        await service.send(PetEvent(kind: kind, senderName: "我", frameName: safeFrame), to: pairedFriend.id)
     }
 
     private func receive(_ event: PetEvent) {
@@ -58,6 +104,14 @@ final class AppModel {
             self.bubbleText = nil
             self.emotion = .idle
             self.onStateChange?()
+        }
+    }
+
+    private func outgoingText(for kind: PetEvent.Kind, friendName: String) -> String {
+        switch kind {
+        case .poke: "已拍一拍 \(friendName)"
+        case .heart: "已送爱心给 \(friendName)"
+        case .celebrate: "已邀请 \(friendName) 一起庆祝"
         }
     }
 }

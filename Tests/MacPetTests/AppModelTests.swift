@@ -16,14 +16,46 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(model.emotion, .idle)
     }
 
-    func testPokeImmediatelyShowsOutgoingMessageAndFrame() async {
-        let model = AppModel(service: LocalPetInteractionService(responseDelay: .seconds(10)))
+    func testDirectoryReturnsNamedPeer() async {
+        let service = LocalPetInteractionService()
+        let alice = PetPeer(id: "alice-device", name: "Alice")
+        await service.setPeers([alice])
+        let peers = await service.availablePeers()
+        XCTAssertEqual(peers, [alice])
+    }
+
+    func testPairingStoresFriendName() {
+        let model = AppModel(service: LocalPetInteractionService())
+        model.pair(with: PetPeer(id: "alice-device", name: "Alice"))
+        XCTAssertEqual(model.pairedFriend?.name, "Alice")
+    }
+
+    func testInteractionWithoutPairingExplainsWhatToDo() async {
+        let model = AppModel(service: LocalPetInteractionService())
+        await model.sendInteraction(kind: .poke)
+        XCTAssertEqual(model.bubbleText, "请先右键宠物，选择要配对的朋友")
+    }
+
+    func testPokeTargetsPairedFriendAndSynchronizesFrame() async {
+        let service = LocalPetInteractionService(responseDelay: .seconds(10))
+        let model = AppModel(service: service)
+        model.pair(with: PetPeer(id: "alice-device", name: "Alice"))
         let task = Task { await model.sendInteraction(kind: .poke, frameName: "ai_buddy_07") }
         await Task.yield()
-        XCTAssertEqual(model.bubbleText, "已拍一拍朋友")
+        XCTAssertEqual(model.bubbleText, "已拍一拍 Alice")
         XCTAssertEqual(model.emotion, .happy)
         XCTAssertEqual(model.activeFrameName, "ai_buddy_07")
         task.cancel()
+    }
+
+    func testPetSizeChangesToChosenScale() {
+        let suiteName = "MacPetTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let model = AppModel(service: LocalPetInteractionService(), defaults: defaults)
+        model.setPetScale(.large)
+        XCTAssertEqual(model.petScale, .large)
+        XCTAssertEqual(defaults.double(forKey: "com.macpet.pet-scale"), 1.3, accuracy: 0.001)
     }
 
     func testIncomingPokeShowsFriendMessage() async throws {

@@ -15,11 +15,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.panelController.hide()
         } onQuit: {
             NSApplication.shared.terminate(nil)
+        } onPair: { [weak self] peer in
+            self?.model.pair(with: peer)
+        } onUnpair: { [weak self] in
+            self?.model.unpair()
+        } onScaleChange: { [weak self] scale in
+            self?.model.setPetScale(scale)
         }
         model.onStateChange = { [weak self] in self?.renderPet() }
+        model.onPeersChange = { [weak self] in self?.renderPet() }
+        model.onScaleChange = { [weak self] in self?.panelController.setPetScale(self?.model.petScale ?? .normal) }
         renderPet()
+        panelController.setPetScale(model.petScale)
         panelController.show()
         model.startListening()
+        model.startRefreshingPeers()
         configureMenuBar()
     }
 
@@ -42,7 +52,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func renderPet() {
-        panelController.render(text: model.bubbleText, emotion: model.emotion, frameName: model.activeFrameName)
+        panelController.render(
+            text: model.bubbleText,
+            emotion: model.emotion,
+            frameName: model.activeFrameName,
+            peers: model.nearbyPeers,
+            pairedFriend: model.pairedFriend
+        )
     }
 
     @objc private func pokeFriend() { Task { await model.sendInteraction(kind: .poke) } }
