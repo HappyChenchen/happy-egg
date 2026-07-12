@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDisplayName</key>
+    <string>MacPet</string>
+    <key>CFBundleExecutable</key>
+    <string>MacPet</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.macpet.prototype</string>
+    <key>CFBundleName</key>
+    <string>MacPet</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>0.1.0</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>LSUIElement</key>
+    <true/>
+    <key>NSBonjourServices</key>
+    <array>
+        <string>_macpet-poke._tcp</string>
+    </array>
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>MacPet 使用局域网自动发现朋友并发送拍一拍互动。</string>
+</dict>
+</plist>
