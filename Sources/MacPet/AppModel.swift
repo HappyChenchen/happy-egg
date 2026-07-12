@@ -78,12 +78,12 @@ final class AppModel {
     }
 
     func sendInteraction(kind: PetEvent.Kind, frameName: String? = nil) async {
-        guard let pairedFriend else {
-            setState(text: "请先右键宠物，选择要配对的朋友", emotion: .idle, frameName: activeFrameName)
-            return
-        }
         let selectedFrame = frameName ?? kind.defaultFrameName
         let safeFrame = BuddyFrames.names.contains(selectedFrame) ? selectedFrame : kind.defaultFrameName
+        guard let pairedFriend else {
+            setState(text: "本地互动成功，配对后可拍朋友", emotion: .happy, frameName: safeFrame)
+            return
+        }
         setState(text: outgoingText(for: kind, friendName: pairedFriend.name), emotion: .happy, frameName: safeFrame)
         await service.send(PetEvent(kind: kind, senderName: "我", frameName: safeFrame), to: pairedFriend.id)
     }

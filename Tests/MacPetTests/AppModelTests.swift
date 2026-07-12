@@ -30,10 +30,12 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(model.pairedFriend?.name, "Alice")
     }
 
-    func testInteractionWithoutPairingExplainsWhatToDo() async {
+    func testInteractionWithoutPairingStillShowsLocalEffect() async {
         let model = AppModel(service: LocalPetInteractionService())
-        await model.sendInteraction(kind: .poke)
-        XCTAssertEqual(model.bubbleText, "请先右键宠物，选择要配对的朋友")
+        await model.sendInteraction(kind: .poke, frameName: "ai_buddy_07")
+        XCTAssertEqual(model.bubbleText, "本地互动成功，配对后可拍朋友")
+        XCTAssertEqual(model.emotion, .happy)
+        XCTAssertEqual(model.activeFrameName, "ai_buddy_07")
     }
 
     func testPokeTargetsPairedFriendAndSynchronizesFrame() async {
