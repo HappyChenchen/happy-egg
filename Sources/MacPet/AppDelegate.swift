@@ -37,7 +37,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func configureMenuBar() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        statusItem.button?.image = NSImage(systemSymbolName: "pawprint.fill", accessibilityDescription: "MacPet")
+        statusItem.button?.image = statusBarIcon()
         let menu = NSMenu()
         menu.addItem(withTitle: "我的宠物", action: nil, keyEquivalent: "")
         menu.addItem(NSMenuItem.separator())
@@ -81,6 +81,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func togglePetVisibility() {
         isPetVisible ? hidePet() : showPet()
+    }
+
+    private func statusBarIcon() -> NSImage? {
+        let bundle: Bundle
+        if let url = Bundle.main.url(forResource: "MacPet_MacPet", withExtension: "bundle"), let packagedBundle = Bundle(url: url) {
+            bundle = packagedBundle
+        } else {
+            bundle = .module
+        }
+        guard let url = bundle.url(forResource: "ai_buddy_05", withExtension: "png"), let image = NSImage(contentsOf: url) else { return nil }
+        image.size = NSSize(width: 18, height: 18)
+        image.isTemplate = false
+        return image
     }
     @objc private func quit() { NSApplication.shared.terminate(nil) }
 }
