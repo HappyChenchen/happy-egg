@@ -1,0 +1,22 @@
+services:
+  relay:
+    build: ../relay
+    restart: unless-stopped
+    expose:
+      - "8080"
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - relay
+volumes:
+  caddy_data:
+  caddy_config:
