@@ -3,3 +3,4 @@
 .DS_Store
 outputs/
 work/
+node_modules/
