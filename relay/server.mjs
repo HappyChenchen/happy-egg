@@ -16,6 +16,14 @@ function validName(name) {
   return typeof name === 'string' && name.trim().length > 0 && name.length <= 32;
 }
 
+function rateLimited(meta) {
+  const now = Date.now();
+  meta.sentAt = meta.sentAt.filter((timestamp) => now - timestamp < 60_000);
+  if (meta.sentAt.length >= 20) return true;
+  meta.sentAt.push(now);
+  return false;
+}
+
 export function createRelayServer() {
   const rooms = new Map();
   const metadata = new WeakMap();
@@ -57,18 +65,28 @@ export function createRelayServer() {
         room.add(socket);
         rooms.set(message.room, room);
         metadata.set(socket, { room: message.room, name: message.name.trim(), sentAt: [] });
-        send(socket, { type: 'joined', connected: room.size });
-        for (const peer of room) if (peer !== socket) send(peer, { type: 'presence', connected: room.size });
+        const existingPeer = [...room].find((peer) => peer !== socket);
+        send(socket, { type: 'joined', connected: room.size, peerName: existingPeer ? metadata.get(existingPeer).name : null });
+        for (const peer of room) if (peer !== socket) send(peer, { type: 'presence', connected: room.size, peerName: message.name.trim() });
         return;
       }
 
       const meta = metadata.get(socket);
-      if (!meta || message.type !== 'event') return reject(socket, 'join required');
+      if (!meta) return reject(socket, 'join required');
+
+      if (message.type === 'profile') {
+        if (!validName(message.name)) return reject(socket, 'invalid profile');
+        if (rateLimited(meta)) return reject(socket, 'rate limit');
+        meta.name = message.name.trim();
+        for (const peer of rooms.get(meta.room) ?? []) {
+          if (peer !== socket) send(peer, { type: 'profile', peerName: meta.name });
+        }
+        return;
+      }
+
+      if (message.type !== 'event') return reject(socket, 'join required');
       if (!EVENT_KINDS.has(message.kind) || !FRAME_NAMES.has(message.frameName)) return reject(socket, 'invalid event');
-      const now = Date.now();
-      meta.sentAt = meta.sentAt.filter((timestamp) => now - timestamp < 60_000);
-      if (meta.sentAt.length >= 20) return reject(socket, 'rate limit');
-      meta.sentAt.push(now);
+      if (rateLimited(meta)) return reject(socket, 'rate limit');
       for (const peer of rooms.get(meta.room) ?? []) {
         if (peer !== socket) send(peer, { type: 'event', kind: message.kind, frameName: message.frameName, senderName: meta.name });
       }

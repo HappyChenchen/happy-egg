@@ -18,15 +18,16 @@ final class AppModel {
     private(set) var activeFrameName = BuddyFrames.names[BuddyFrames.initialIndex]
     private(set) var nearbyPeers: [PetPeer] = []
     private(set) var pairedFriend: PetPeer?
+    private(set) var friends: [PetPeer] = []
+    private(set) var ownerName: String
+    private(set) var petName: String
     private(set) var petScale: PetScale
     var onStateChange: (() -> Void)?
     var onPeersChange: (() -> Void)?
     var onScaleChange: (() -> Void)?
 
     var confirmedFriend: PetPeer? {
-        guard let pairedFriend,
-              pairedFriend.name != "配对码已创建",
-              pairedFriend.name != "正在加入配对" else { return nil }
+        guard let pairedFriend, !Self.isPendingFriendName(pairedFriend.name) else { return nil }
         return pairedFriend
     }
 
@@ -34,6 +35,9 @@ final class AppModel {
         self.service = service
         self.defaults = defaults
         petScale = PetScale(rawValue: defaults.object(forKey: "com.macpet.pet-scale") as? CGFloat ?? 1) ?? .normal
+        ownerName = defaults.string(forKey: "com.macpet.owner-name") ?? "我"
+        petName = defaults.string(forKey: "com.macpet.pet-name") ?? "我的宠物"
+        if let data = defaults.data(forKey: "com.macpet.friends"), let saved = try? JSONDecoder().decode([PetPeer].self, from: data) { friends = saved }
     }
 
     deinit {
@@ -55,11 +59,20 @@ final class AppModel {
         let connectionService = service
         connectionTask = Task { [weak self] in
             let updates = await connectionService.connectionUpdates()
-            for await name in updates {
+            for await update in updates {
                 guard let self, let friend = self.pairedFriend else { continue }
+                let name = update.name
+                let oldName = friend.name
                 self.pairedFriend = PetPeer(id: friend.id, name: name)
+                self.saveFriend(self.pairedFriend!)
                 self.onPeersChange?()
-                self.setState(text: "已配对 \(name)", emotion: .happy, frameName: self.activeFrameName)
+                switch update {
+                case .peerAvailable:
+                    self.setState(text: "已配对 \(name)", emotion: .happy, frameName: self.activeFrameName)
+                case .peerRenamed:
+                    let message = oldName == name || Self.isPendingFriendName(oldName) ? "已配对 \(name)" : "\(oldName) 改名为 \(name)"
+                    self.setState(text: message, emotion: .happy, frameName: self.activeFrameName)
+                }
             }
         }
     }
@@ -90,10 +103,17 @@ final class AppModel {
         onPeersChange?()
     }
 
+    func selectFriend(_ friend: PetPeer) async {
+        pairedFriend = friend
+        await service.pair(room: friend.id, name: petName)
+        onPeersChange?()
+        setState(text: "正在连接 \(friend.name)", emotion: .happy, frameName: activeFrameName)
+    }
+
     func createPublicPairing() async -> String {
         let code = UUID().uuidString.replacingOccurrences(of: "-", with: "") + UUID().uuidString.replacingOccurrences(of: "-", with: "")
         pairedFriend = PetPeer(id: code, name: "配对码已创建")
-        await service.pair(room: code, name: Host.current().localizedName ?? "我")
+        await service.pair(room: code, name: petName)
         onPeersChange?()
         setState(text: "配对码已复制，发给朋友", emotion: .happy, frameName: activeFrameName)
         return code
@@ -106,7 +126,7 @@ final class AppModel {
             return
         }
         pairedFriend = PetPeer(id: normalized, name: "正在加入配对")
-        await service.pair(room: normalized, name: Host.current().localizedName ?? "我")
+        await service.pair(room: normalized, name: petName)
         onPeersChange?()
         setState(text: "已加入配对，等待朋友互动", emotion: .happy, frameName: activeFrameName)
     }
@@ -129,8 +149,9 @@ final class AppModel {
     }
 
     private func receive(_ event: PetEvent) {
-        if pairedFriend?.name == "配对码已创建" || pairedFriend?.name == "正在加入配对" {
-            pairedFriend = PetPeer(id: pairedFriend!.id, name: event.senderName)
+        if let currentFriend = pairedFriend, Self.isPendingFriendName(currentFriend.name) {
+            pairedFriend = PetPeer(id: currentFriend.id, name: event.senderName)
+            saveFriend(pairedFriend!)
             onPeersChange?()
         }
         let frameName = BuddyFrames.names.contains(event.frameName) ? event.frameName : event.kind.defaultFrameName
@@ -157,5 +178,35 @@ final class AppModel {
         case .heart: "已送爱心给 \(friendName)"
         case .celebrate: "已邀请 \(friendName) 一起庆祝"
         }
+    }
+
+    func setProfile(owner: String, pet: String) {
+        let oldPetName = petName
+        ownerName = Self.cleanName(owner, fallback: "我")
+        petName = Self.cleanName(pet, fallback: "我的宠物")
+        defaults.set(ownerName, forKey: "com.macpet.owner-name")
+        defaults.set(petName, forKey: "com.macpet.pet-name")
+        guard oldPetName != petName, confirmedFriend != nil else { return }
+        let service = service
+        let newName = petName
+        Task {
+            await service.updateName(newName)
+        }
+        setState(text: "名字已更新，朋友会看到", emotion: .happy, frameName: activeFrameName)
+    }
+
+    private func saveFriend(_ friend: PetPeer) {
+        friends.removeAll { $0.id == friend.id }
+        friends.append(friend)
+        if let data = try? JSONEncoder().encode(friends) { defaults.set(data, forKey: "com.macpet.friends") }
+    }
+
+    private static func isPendingFriendName(_ name: String) -> Bool {
+        name == "配对码已创建" || name == "正在加入配对"
+    }
+
+    private static func cleanName(_ value: String, fallback: String) -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? fallback : String(trimmed.prefix(20))
     }
 }

@@ -1,6 +1,6 @@
 import CoreGraphics
 
-struct PetPeer: Hashable, Identifiable, Sendable {
+struct PetPeer: Codable, Hashable, Identifiable, Sendable {
     let id: String
     let name: String
 }

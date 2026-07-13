@@ -19,6 +19,9 @@ final class PetView: NSView {
     var onCreatePublicPairing: (() -> Void)?
     var onJoinPublicPairing: (() -> Void)?
     var nearbyPeers: [PetPeer] = []
+    var friends: [PetPeer] = []
+    var onSelectFriend: ((PetPeer) -> Void)?
+    var onEditProfile: (() -> Void)?
     var pairedFriend: PetPeer?
     private var bubbleText: String?
     private var emotion: AppModel.Emotion = .idle
@@ -50,7 +53,25 @@ final class PetView: NSView {
 
     override func rightMouseDown(with event: NSEvent) {
         let menu = NSMenu()
-        if let pairedFriend {
+        let friendsItem = NSMenuItem(title: "好友", action: nil, keyEquivalent: "")
+        let friendsMenu = NSMenu()
+        if friends.isEmpty {
+            let empty = NSMenuItem(title: "还没有长期好友", action: nil, keyEquivalent: "")
+            empty.isEnabled = false
+            friendsMenu.addItem(empty)
+        } else {
+            for friend in friends {
+                let item = NSMenuItem(title: friend.name, action: #selector(selectFriend(_:)), keyEquivalent: "")
+                item.representedObject = friend.id
+                item.target = self
+                friendsMenu.addItem(item)
+            }
+        }
+        friendsItem.submenu = friendsMenu
+        menu.addItem(friendsItem)
+        menu.addItem(withTitle: "宠物资料…", action: #selector(editProfile), keyEquivalent: "")
+        menu.addItem(NSMenuItem.separator())
+        if let pairedFriend = confirmedFriend {
             let pairedItem = NSMenuItem(title: "已配对：\(pairedFriend.name)", action: nil, keyEquivalent: "")
             pairedItem.isEnabled = false
             menu.addItem(pairedItem)
@@ -68,7 +89,7 @@ final class PetView: NSView {
             menu.addItem(pairingItem)
         }
         menu.addItem(NSMenuItem.separator())
-        if let pairedFriend {
+        if let pairedFriend = confirmedFriend {
             menu.addItem(withTitle: "拍一拍 \(pairedFriend.name)", action: #selector(pokeFriend), keyEquivalent: "")
             menu.addItem(withTitle: "送一颗爱心", action: #selector(sendHeart), keyEquivalent: "")
             menu.addItem(withTitle: "一起庆祝", action: #selector(celebrate), keyEquivalent: "")
@@ -154,4 +175,17 @@ final class PetView: NSView {
 
     @objc private func createPublicPairing() { onCreatePublicPairing?() }
     @objc private func joinPublicPairing() { onJoinPublicPairing?() }
+
+    @objc private func selectFriend(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String, let friend = friends.first(where: { $0.id == id }) else { return }
+        onSelectFriend?(friend)
+    }
+    @objc private func editProfile() { onEditProfile?() }
+
+    private var confirmedFriend: PetPeer? {
+        guard let pairedFriend,
+              pairedFriend.name != "配对码已创建",
+              pairedFriend.name != "正在加入配对" else { return nil }
+        return pairedFriend
+    }
 }

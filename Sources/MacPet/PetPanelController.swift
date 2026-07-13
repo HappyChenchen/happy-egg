@@ -15,7 +15,9 @@ final class PetPanelController {
         onUnpair: @escaping () -> Void,
         onScaleChange: @escaping (PetScale) -> Void,
         onCreatePublicPairing: @escaping () -> Void,
-        onJoinPublicPairing: @escaping () -> Void
+        onJoinPublicPairing: @escaping () -> Void,
+        onSelectFriend: @escaping (PetPeer) -> Void,
+        onEditProfile: @escaping () -> Void
     ) {
         petView = PetView(frame: NSRect(x: 0, y: 0, width: 220, height: 250))
         petView.onPoke = onPoke
@@ -27,6 +29,8 @@ final class PetPanelController {
         petView.onScaleChange = onScaleChange
         petView.onCreatePublicPairing = onCreatePublicPairing
         petView.onJoinPublicPairing = onJoinPublicPairing
+        petView.onSelectFriend = onSelectFriend
+        petView.onEditProfile = onEditProfile
         panel = NSPanel(
             contentRect: NSRect(x: 140, y: 140, width: 220, height: 250),
             styleMask: [.borderless, .nonactivatingPanel],
@@ -44,8 +48,9 @@ final class PetPanelController {
 
     func show() { panel.orderFrontRegardless() }
     func hide() { panel.orderOut(nil) }
-    func render(text: String?, emotion: AppModel.Emotion, frameName: String, peers: [PetPeer], pairedFriend: PetPeer?) {
+    func render(text: String?, emotion: AppModel.Emotion, frameName: String, peers: [PetPeer], friends: [PetPeer], pairedFriend: PetPeer?) {
         petView.nearbyPeers = peers
+        petView.friends = friends
         petView.pairedFriend = pairedFriend
         petView.render(text: text, emotion: emotion, frameName: frameName)
     }

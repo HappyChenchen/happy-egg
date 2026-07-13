@@ -35,6 +35,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } onJoinPublicPairing: { [weak self] in
             guard let code = NSPasteboard.general.string(forType: .string) else { return }
             Task { await self?.model.joinPublicPairing(code: code) }
+        } onSelectFriend: { [weak self] friend in
+            Task { await self?.model.selectFriend(friend) }
+        } onEditProfile: { [weak self] in
+            self?.editProfile()
         }
         model.onStateChange = { [weak self] in self?.renderPet() }
         model.onPeersChange = { [weak self] in self?.updateMenuState(); self?.renderPet() }
@@ -71,8 +75,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             emotion: model.emotion,
             frameName: model.activeFrameName,
             peers: model.nearbyPeers,
+            friends: model.friends,
             pairedFriend: model.pairedFriend
         )
+    }
+
+    private func editProfile() {
+        let alert = NSAlert()
+        alert.messageText = "宠物资料"
+        let owner = NSTextField(string: model.ownerName)
+        let pet = NSTextField(string: model.petName)
+        let stack = NSStackView(views: [NSTextField(labelWithString: "主人名"), owner, NSTextField(labelWithString: "宠物名"), pet])
+        stack.orientation = .vertical
+        stack.spacing = 6
+        stack.frame = NSRect(x: 0, y: 0, width: 260, height: 100)
+        alert.accessoryView = stack
+        alert.addButton(withTitle: "保存")
+        alert.addButton(withTitle: "取消")
+        if alert.runModal() == .alertFirstButtonReturn { model.setProfile(owner: owner.stringValue, pet: pet.stringValue) }
     }
 
     @objc private func pokeFriend() { Task { await model.sendInteraction(kind: .poke) } }
