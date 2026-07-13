@@ -44,8 +44,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 NSPasteboard.general.setString(code, forType: .string)
             }
         } onJoinPublicPairing: { [weak self] in
-            guard let code = NSPasteboard.general.string(forType: .string) else { return }
-            Task { await self?.model.joinPublicPairing(code: code) }
+            self?.promptForPairingCode()
         } onSelectFriend: { [weak self] friend in
             Task { await self?.model.selectFriend(friend) }
         } onEditProfile: { [weak self] in
@@ -123,6 +122,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         alert.addButton(withTitle: "保存")
         alert.addButton(withTitle: "取消")
         if alert.runModal() == .alertFirstButtonReturn { model.setProfile(owner: model.ownerName, pet: pet.stringValue) }
+    }
+
+    private func promptForPairingCode() {
+        let alert = NSAlert()
+        alert.messageText = "加入配对"
+        alert.informativeText = "输入朋友发来的 8 位配对码"
+        let input = NSTextField(string: NSPasteboard.general.string(forType: .string) ?? "")
+        input.placeholderString = "例如 abcdef23"
+        input.font = NSFont.monospacedSystemFont(ofSize: 16, weight: .medium)
+        input.controlSize = .large
+        input.alignment = .center
+        input.frame = NSRect(x: 0, y: 0, width: 360, height: 32)
+        alert.accessoryView = input
+        alert.addButton(withTitle: "加入")
+        alert.addButton(withTitle: "取消")
+        alert.window.initialFirstResponder = input
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        Task { await model.joinPublicPairing(code: input.stringValue) }
     }
 
     @objc private func pokeFriend() { Task { await model.sendInteraction(kind: .poke) } }
