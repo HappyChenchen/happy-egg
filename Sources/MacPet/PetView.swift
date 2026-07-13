@@ -23,6 +23,7 @@ final class PetView: NSView {
     var onSelectFriend: ((PetPeer) -> Void)?
     var onEditProfile: (() -> Void)?
     var pairedFriend: PetPeer?
+    var petName = "我的宠物"
     private var bubbleText: String?
     private var emotion: AppModel.Emotion = .idle
     private var frameIndex = BuddyFrames.initialIndex
@@ -53,7 +54,9 @@ final class PetView: NSView {
 
     override func rightMouseDown(with event: NSEvent) {
         let menu = NSMenu()
-        let friendsItem = NSMenuItem(title: "好友", action: nil, keyEquivalent: "")
+        let profileItem = NSMenuItem(title: "我的宠物：\(petName)", action: #selector(editProfile), keyEquivalent: "")
+        menu.addItem(profileItem)
+        let friendsItem = NSMenuItem(title: "好友列表（\(friends.count)）", action: nil, keyEquivalent: "")
         let friendsMenu = NSMenu()
         if friends.isEmpty {
             let empty = NSMenuItem(title: "还没有长期好友", action: nil, keyEquivalent: "")
@@ -61,7 +64,7 @@ final class PetView: NSView {
             friendsMenu.addItem(empty)
         } else {
             for friend in friends {
-                let item = NSMenuItem(title: friend.name, action: #selector(selectFriend(_:)), keyEquivalent: "")
+                let item = NSMenuItem(title: "\(friend.name) · 好友", action: #selector(selectFriend(_:)), keyEquivalent: "")
                 item.representedObject = friend.id
                 item.target = self
                 friendsMenu.addItem(item)
@@ -69,7 +72,6 @@ final class PetView: NSView {
         }
         friendsItem.submenu = friendsMenu
         menu.addItem(friendsItem)
-        menu.addItem(withTitle: "宠物资料…", action: #selector(editProfile), keyEquivalent: "")
         menu.addItem(NSMenuItem.separator())
         if let pairedFriend = confirmedFriend {
             let pairedItem = NSMenuItem(title: "已配对：\(pairedFriend.name)", action: nil, keyEquivalent: "")

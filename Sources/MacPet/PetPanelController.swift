@@ -48,10 +48,11 @@ final class PetPanelController {
 
     func show() { panel.orderFrontRegardless() }
     func hide() { panel.orderOut(nil) }
-    func render(text: String?, emotion: AppModel.Emotion, frameName: String, peers: [PetPeer], friends: [PetPeer], pairedFriend: PetPeer?) {
+    func render(text: String?, emotion: AppModel.Emotion, frameName: String, petName: String, peers: [PetPeer], friends: [PetPeer], pairedFriend: PetPeer?) {
         petView.nearbyPeers = peers
         petView.friends = friends
         petView.pairedFriend = pairedFriend
+        petView.petName = petName
         petView.render(text: text, emotion: emotion, frameName: frameName)
     }
 

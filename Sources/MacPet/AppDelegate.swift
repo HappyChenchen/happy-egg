@@ -8,6 +8,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var visibilityItem: NSMenuItem!
     private var pairingStatusItem: NSMenuItem!
     private var interactionItem: NSMenuItem!
+    private var profileItem: NSMenuItem!
     private var isPetVisible = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -40,7 +41,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } onEditProfile: { [weak self] in
             self?.editProfile()
         }
-        model.onStateChange = { [weak self] in self?.renderPet() }
+        model.onStateChange = { [weak self] in self?.renderPet(); self?.updateProfileMenuItem() }
         model.onPeersChange = { [weak self] in self?.updateMenuState(); self?.renderPet() }
         model.onScaleChange = { [weak self] in self?.panelController.setPetScale(self?.model.petScale ?? .normal) }
         renderPet()
@@ -55,7 +56,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem.button?.image = statusBarIcon()
         let menu = NSMenu()
-        menu.addItem(withTitle: "我的宠物", action: nil, keyEquivalent: "")
+        profileItem = menu.addItem(withTitle: "我的宠物：\(model.petName)", action: nil, keyEquivalent: "")
+        profileItem.isEnabled = false
         menu.addItem(NSMenuItem.separator())
         pairingStatusItem = NSMenuItem(title: "公网模式 · 尚未配对", action: nil, keyEquivalent: "")
         pairingStatusItem.isEnabled = false
@@ -69,11 +71,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         updateMenuState()
     }
 
+    private func updateProfileMenuItem() {
+        profileItem?.title = "我的宠物：\(model.petName)"
+    }
+
     private func renderPet() {
         panelController.render(
             text: model.bubbleText,
             emotion: model.emotion,
             frameName: model.activeFrameName,
+            petName: model.petName,
             peers: model.nearbyPeers,
             friends: model.friends,
             pairedFriend: model.pairedFriend
