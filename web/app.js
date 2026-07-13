@@ -31,6 +31,7 @@ $('relay-label').textContent = RELAY_URL;
 connectButton.addEventListener('click', connect);
 disconnectButton.addEventListener('click', disconnect);
 pairingCode.addEventListener('keydown', (event) => { if (event.key === 'Enter') connect(); });
+pairingCode.addEventListener('input', () => { petCode.textContent = pairingCode.value.trim().toLowerCase() || '等待配对'; });
 actionButtons.forEach((button) => button.addEventListener('click', () => sendAction(button.dataset.kind)));
 
 function getPeerID() {

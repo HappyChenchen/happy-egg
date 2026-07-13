@@ -149,8 +149,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             pairingStatusItem?.title = "已配对 · \(friend.name)"
             interactionItem?.title = "拍一拍 \(friend.name)"
             interactionItem?.isEnabled = true
-        } else if model.pairedFriend?.name == "配对码已创建" {
-            pairingStatusItem?.title = "公网配对 · 等待朋友加入"
+        } else if let code = model.activePairingCode {
+            pairingStatusItem?.title = "配对码 · " + code
             interactionItem?.title = "等待朋友加入后可互动"
             interactionItem?.isEnabled = false
         } else if model.pairedFriend?.name == "正在加入配对" {

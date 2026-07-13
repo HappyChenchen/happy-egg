@@ -50,6 +50,11 @@ final class AppModel {
         return pairedFriend
     }
 
+    var activePairingCode: String? {
+        guard let pairedFriend, pairedFriend.name == "配对码已创建" else { return nil }
+        return pairedFriend.id
+    }
+
     init(service: any PetInteractionService, defaults: UserDefaults = .standard, instanceID: String? = nil) {
         self.service = service
         self.defaults = defaults

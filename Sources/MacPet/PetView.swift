@@ -81,6 +81,12 @@ final class PetView: NSView {
         } else {
             let pairingItem = NSMenuItem(title: "公网配对", action: nil, keyEquivalent: "")
             let pairingMenu = NSMenu()
+            if let pairedFriend, pairedFriend.name == "配对码已创建" {
+                let currentCodeItem = NSMenuItem(title: "当前配对码：\(pairedFriend.id)", action: nil, keyEquivalent: "")
+                currentCodeItem.isEnabled = false
+                pairingMenu.addItem(currentCodeItem)
+                pairingMenu.addItem(NSMenuItem.separator())
+            }
             let createItem = NSMenuItem(title: "创建短配对码（复制）", action: #selector(createPublicPairing), keyEquivalent: "")
             createItem.target = self
             pairingMenu.addItem(createItem)

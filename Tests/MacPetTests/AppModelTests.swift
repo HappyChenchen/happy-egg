@@ -96,6 +96,7 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(code.count, 8)
         XCTAssertEqual(code, code.lowercased())
         XCTAssertNotNil(code.range(of: "^[a-hj-km-np-z2-9]{8}$", options: .regularExpression))
+        XCTAssertEqual(model.activePairingCode, code)
     }
 
     func testInteractionWhilePairingWaitsForFriend() async {
