@@ -17,10 +17,18 @@ const petImage = $('pet-image');
 const petName = $('pet-name');
 const petMessage = $('pet-message');
 const petStatusDot = $('pet-status-dot');
+const sceneStatusDot = $('scene-status-dot');
 const petCode = $('pet-code');
 const actionHint = $('action-hint');
 const eventLog = $('event-log');
-const actionButtons = [...document.querySelectorAll('.action-button')];
+const menuButton = $('menu-button');
+const operationMenu = $('operation-menu');
+const petCard = $('pet-card');
+const menuPetName = $('menu-pet-name');
+const menuState = $('menu-state');
+const hideButton = $('hide-button');
+const scaleOptions = [...document.querySelectorAll('.scale-option')];
+const actionButtons = [...document.querySelectorAll('.menu-action')];
 
 let socket = null;
 let connected = false;
@@ -30,8 +38,15 @@ const peerID = getPeerID();
 $('relay-label').textContent = RELAY_URL;
 connectButton.addEventListener('click', connect);
 disconnectButton.addEventListener('click', disconnect);
+menuButton.addEventListener('click', (event) => { event.stopPropagation(); toggleMenu(); });
+petCard.addEventListener('contextmenu', (event) => { event.preventDefault(); openMenu(); });
+document.addEventListener('click', (event) => {
+  if (!operationMenu.contains(event.target) && event.target !== menuButton) closeMenu();
+});
 pairingCode.addEventListener('keydown', (event) => { if (event.key === 'Enter') connect(); });
 pairingCode.addEventListener('input', () => { petCode.textContent = pairingCode.value.trim().toLowerCase() || '等待配对'; });
+hideButton.addEventListener('click', togglePetVisibility);
+scaleOptions.forEach((option) => option.addEventListener('click', () => setPetScale(option.dataset.scale)));
 actionButtons.forEach((button) => button.addEventListener('click', () => sendAction(button.dataset.kind)));
 
 function getPeerID() {
@@ -72,6 +87,7 @@ function disconnect() {
   setConnection('idle', '未连接');
   setActionsEnabled(false);
   petName.textContent = '还没有连接';
+  menuPetName.textContent = '未连接';
   petCode.textContent = '等待配对';
   setMessage('输入配对码，让网页和 MacPet 打个招呼。');
 }
@@ -118,6 +134,7 @@ function becomeOnline(name) {
   connected = true;
   remoteName = name;
   petName.textContent = name;
+  menuPetName.textContent = name;
   setConnection('online', '在线');
   setActionsEnabled(true);
   setMessage('连接成功，可以从网页和宠物互动。');
@@ -131,6 +148,7 @@ function sendAction(kind) {
   petImage.src = `../Sources/MacPet/Resources/${frameName}.png`;
   setMessage(outgoingText(kind));
   eventLog.textContent = `${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} · 已发送 ${kind}`;
+  closeMenu();
 }
 
 function cleanName(value) { return (value || '网页宠物').trim().slice(0, 20) || '网页宠物'; }
@@ -138,5 +156,26 @@ function incomingText(kind) { return ({ poke: '拍了拍你', heart: '送来一�
 function outgoingText(kind) { return ({ poke: '网页端拍了一拍', heart: '网页端送出一颗爱心', celebrate: '网页端发起庆祝' }[kind] || '网页端发送了互动'); }
 function showMessage(text, type = '') { petMessage.textContent = text; petMessage.dataset.type = type; }
 function setMessage(text, type = '') { showMessage(text, type); }
-function setConnection(state, label) { connectionPill.dataset.state = state; connectionLabel.textContent = label; }
+function setConnection(state, label) {
+  connectionPill.dataset.state = state;
+  connectionLabel.textContent = label;
+  menuState.textContent = label;
+  const online = state === 'online';
+  petStatusDot.classList.toggle('online', online);
+  sceneStatusDot.classList.toggle('online', online);
+}
 function setActionsEnabled(enabled) { actionButtons.forEach((button) => { button.disabled = !enabled; }); disconnectButton.disabled = !socket; }
+
+function toggleMenu() { operationMenu.hidden ? openMenu() : closeMenu(); }
+function openMenu() { operationMenu.hidden = false; menuButton.setAttribute('aria-expanded', 'true'); }
+function closeMenu() { operationMenu.hidden = true; menuButton.setAttribute('aria-expanded', 'false'); }
+function togglePetVisibility() {
+  const hidden = petCard.classList.toggle('is-hidden');
+  hideButton.innerHTML = `${hidden ? '显示宠物' : '隐藏宠物'} <span>⌘</span>`;
+  closeMenu();
+}
+function setPetScale(scale) {
+  petCard.dataset.scale = scale;
+  scaleOptions.forEach((option) => option.classList.toggle('is-selected', option.dataset.scale === scale));
+  closeMenu();
+}
