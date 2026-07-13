@@ -45,6 +45,11 @@ final class AppModelTests: XCTestCase {
         XCTAssertNotEqual(modelA.petName, modelB.petName)
     }
 
+    func testInstanceLaunchArgumentIsNormalized() {
+        XCTAssertEqual(AppModel.launchInstanceID(arguments: ["MacPet", "--instance", "A"]), "a")
+        XCTAssertNil(AppModel.launchInstanceID(arguments: ["MacPet", "--instance", "bad id"]))
+    }
+
     func testDirectoryReturnsNamedPeer() async {
         let service = LocalPetInteractionService()
         let alice = PetPeer(id: "alice-device", name: "Alice")

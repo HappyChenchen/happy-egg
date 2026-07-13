@@ -3,6 +3,7 @@ import AppKit
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let model = AppModel(service: PublicPetInteractionService(), defaults: AppModel.launchDefaults())
+    private let launchInstanceID = AppModel.launchInstanceID()
     private var panelController: PetPanelController!
     private var statusItem: NSStatusItem!
     private var visibilityItem: NSMenuItem!
@@ -41,6 +42,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } onEditProfile: { [weak self] in
             self?.editProfile()
         }
+        panelController.setOrigin(panelOrigin())
         model.onStateChange = { [weak self] in self?.renderPet(); self?.updateProfileMenuItem() }
         model.onPeersChange = { [weak self] in self?.updateMenuState(); self?.renderPet() }
         model.onScaleChange = { [weak self] in self?.panelController.setPetScale(self?.model.petScale ?? .normal) }
@@ -73,6 +75,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func updateProfileMenuItem() {
         profileItem?.title = "我的宠物：\(model.petName)"
+    }
+
+    private func panelOrigin() -> NSPoint {
+        switch launchInstanceID {
+        case "a": NSPoint(x: 140, y: 160)
+        case "b": NSPoint(x: 420, y: 160)
+        default: NSPoint(x: 140, y: 140)
+        }
     }
 
     private func renderPet() {

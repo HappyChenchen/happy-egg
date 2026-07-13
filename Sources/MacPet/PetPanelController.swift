@@ -48,6 +48,7 @@ final class PetPanelController {
 
     func show() { panel.orderFrontRegardless() }
     func hide() { panel.orderOut(nil) }
+    func setOrigin(_ origin: NSPoint) { panel.setFrameOrigin(origin) }
     func render(text: String?, emotion: AppModel.Emotion, frameName: String, petName: String, peers: [PetPeer], friends: [PetPeer], pairedFriend: PetPeer?) {
         petView.nearbyPeers = peers
         petView.friends = friends

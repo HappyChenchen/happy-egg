@@ -29,12 +29,17 @@ final class AppModel {
     var onPeersChange: (() -> Void)?
     var onScaleChange: (() -> Void)?
 
-    static func launchDefaults(arguments: [String] = ProcessInfo.processInfo.arguments) -> UserDefaults {
+    static func launchInstanceID(arguments: [String] = ProcessInfo.processInfo.arguments) -> String? {
         guard let index = arguments.firstIndex(of: "--instance"),
-              arguments.indices.contains(index + 1) else { return .standard }
+              arguments.indices.contains(index + 1) else { return nil }
         let rawID = arguments[index + 1]
-        guard rawID.range(of: "^[A-Za-z0-9_-]{1,32}$", options: .regularExpression) != nil else { return .standard }
-        let suiteName = "com.macpet.prototype.instance.\(rawID.lowercased())"
+        guard rawID.range(of: "^[A-Za-z0-9_-]{1,32}$", options: .regularExpression) != nil else { return nil }
+        return rawID.lowercased()
+    }
+
+    static func launchDefaults(arguments: [String] = ProcessInfo.processInfo.arguments) -> UserDefaults {
+        guard let instanceID = launchInstanceID(arguments: arguments) else { return .standard }
+        let suiteName = "com.macpet.prototype.instance.\(instanceID)"
         return UserDefaults(suiteName: suiteName) ?? .standard
     }
 
