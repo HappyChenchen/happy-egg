@@ -17,10 +17,7 @@ const petImage = $('pet-image');
 const petName = $('pet-name');
 const petMessage = $('pet-message');
 const petStatusDot = $('pet-status-dot');
-const sceneStatusDot = $('scene-status-dot');
 const petCode = $('pet-code');
-const actionHint = $('action-hint');
-const eventLog = $('event-log');
 const menuButton = $('menu-button');
 const operationMenu = $('operation-menu');
 const petCard = $('pet-card');
@@ -35,7 +32,6 @@ let connected = false;
 let remoteName = '';
 const peerID = getPeerID();
 
-$('relay-label').textContent = RELAY_URL;
 connectButton.addEventListener('click', connect);
 disconnectButton.addEventListener('click', disconnect);
 menuButton.addEventListener('click', (event) => { event.stopPropagation(); toggleMenu(); });
@@ -60,18 +56,18 @@ function getPeerID() {
 
 function connect() {
   const code = pairingCode.value.trim().toLowerCase();
-  if (!ROOM_PATTERN.test(code)) return showMessage('配对码需要是 8 位短码，请检查输入。', 'error');
+  if (!ROOM_PATTERN.test(code)) return showMessage('请输入 8 位配对码', 'error');
   if (socket) socket.close();
   setConnection('connecting', '连接中');
-  setMessage('正在寻找 MacPet…');
+  setMessage('正在寻找宠物…');
   petCode.textContent = code;
   socket = new WebSocket(RELAY_URL);
   socket.addEventListener('open', () => {
     socket.send(JSON.stringify({ type: 'join', room: code, name: cleanName(webName.value), peerID }));
-    showMessage('配对码已发送，等待宠物回应。');
+    showMessage('等待宠物回应…');
   });
   socket.addEventListener('message', (event) => handleMessage(JSON.parse(event.data)));
-  socket.addEventListener('error', () => showMessage('连接失败，请确认 relay 地址和配对码。', 'error'));
+  socket.addEventListener('error', () => showMessage('连接失败，请重试', 'error'));
   socket.addEventListener('close', () => {
     socket = null;
     setConnection('idle', '未连接');
@@ -86,10 +82,10 @@ function disconnect() {
   remoteName = '';
   setConnection('idle', '未连接');
   setActionsEnabled(false);
-  petName.textContent = '还没有连接';
+  petName.textContent = '未连接';
   menuPetName.textContent = '未连接';
   petCode.textContent = '等待配对';
-  setMessage('输入配对码，让网页和 MacPet 打个招呼。');
+  setMessage('打开“操作”输入配对码');
 }
 
 function handleMessage(message) {
@@ -101,7 +97,7 @@ function handleMessage(message) {
   }
   if (message.type === 'joined') {
     if (message.peerName) becomeOnline(message.peerName);
-    else showMessage('已进入房间，等待 MacPet 加入。');
+    else showMessage('等待宠物上线…');
     return;
   }
   if (message.type === 'presence') {
@@ -110,14 +106,14 @@ function handleMessage(message) {
       connected = false;
       setConnection('connecting', '等待宠物');
       setActionsEnabled(false);
-      setMessage('网页已连接，等待 MacPet 上线。');
+      setMessage('等待宠物上线…');
     }
     return;
   }
   if (message.type === 'profile' && message.peerName) {
     remoteName = message.peerName;
     petName.textContent = remoteName;
-    setMessage('宠物名字已更新。');
+    setMessage('名字已更新');
     return;
   }
   if (message.type === 'event') {
@@ -126,7 +122,6 @@ function handleMessage(message) {
     petImage.src = `../Sources/MacPet/Resources/${frame}.png`;
     petImage.animate([{ transform: 'translateY(0) scale(1)' }, { transform: 'translateY(-8px) scale(1.04)' }, { transform: 'translateY(0) scale(1)' }], { duration: 480, easing: 'cubic-bezier(.2,.8,.2,1)' });
     setMessage(`${name}${incomingText(message.kind)}`);
-    eventLog.textContent = `${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} · 收到 ${message.kind}`;
   }
 }
 
@@ -137,8 +132,7 @@ function becomeOnline(name) {
   menuPetName.textContent = name;
   setConnection('online', '在线');
   setActionsEnabled(true);
-  setMessage('连接成功，可以从网页和宠物互动。');
-  actionHint.textContent = `正在连接 ${name}`;
+  setMessage('可以互动了');
 }
 
 function sendAction(kind) {
@@ -147,7 +141,6 @@ function sendAction(kind) {
   socket.send(JSON.stringify({ type: 'event', kind, frameName }));
   petImage.src = `../Sources/MacPet/Resources/${frameName}.png`;
   setMessage(outgoingText(kind));
-  eventLog.textContent = `${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} · 已发送 ${kind}`;
   closeMenu();
 }
 
@@ -162,7 +155,6 @@ function setConnection(state, label) {
   menuState.textContent = label;
   const online = state === 'online';
   petStatusDot.classList.toggle('online', online);
-  sceneStatusDot.classList.toggle('online', online);
 }
 function setActionsEnabled(enabled) { actionButtons.forEach((button) => { button.disabled = !enabled; }); disconnectButton.disabled = !socket; }
 

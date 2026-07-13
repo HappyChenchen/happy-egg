@@ -139,13 +139,14 @@ input { outline: none; }
 .menu-trigger { display: inline-flex; align-items: center; gap: 9px; padding: 9px 13px; color: var(--ink); border: 1px solid var(--line); border-radius: 11px; background: rgba(255,255,255,.72); box-shadow: 0 5px 18px rgba(74,58,45,.06); font-size: 12px; font-weight: 800; transition: background .2s, transform .2s; }
 .menu-trigger:hover, .menu-trigger[aria-expanded="true"] { transform: translateY(-1px); background: rgba(255,134,87,.2); }
 .menu-trigger span { color: var(--orange); font-size: 16px; line-height: .7; }
-.desktop-scene { position: relative; display: grid; grid-template-columns: minmax(185px, .52fr) minmax(460px, 1.48fr); gap: 24px; align-items: center; min-height: 590px; }
+.desktop-scene { position: relative; display: grid; place-items: center; min-height: 590px; }
 .scene-copy { align-self: center; padding: 0 0 18px 6px; }
 .scene-copy h2 { margin: 12px 0 18px; font-size: clamp(34px, 5vw, 58px); line-height: .98; letter-spacing: -.08em; }
 .scene-copy h2 em { color: var(--orange); font-style: normal; }
 .scene-note { max-width: 210px; color: var(--muted); font-size: 12px; line-height: 1.7; }
 .scene-meta { display: flex; align-items: center; gap: 9px; margin-top: 25px; color: var(--muted); font-family: var(--mono); font-size: 10px; }
-.pet-card { width: 100%; min-height: 560px; padding: 24px; background: rgba(255,255,255,.88); }
+.pet-card { width: min(720px, 100%); min-height: 560px; padding: 24px; background: rgba(255,255,255,.88); }
+.pet-card-top { justify-content: flex-end; }
 .pet-stage { min-height: 390px; }
 .pet-stage img { transition: width .28s ease, opacity .25s ease; }
 #pet-card[data-scale="small"] #pet-image { width: min(240px, 61%); }
@@ -185,11 +186,7 @@ input { outline: none; }
 
 @media (max-width: 760px) {
   .desktop-shell { width: min(100% - 24px, 560px); padding-top: 22px; }
-  .desktop-scene { grid-template-columns: 1fr; min-height: 0; gap: 10px; }
-  .scene-copy { padding: 17px 8px 5px; }
-  .scene-copy h2 { margin: 8px 0 12px; font-size: 38px; }
-  .scene-note { max-width: 300px; }
-  .scene-meta { margin-top: 15px; }
+  .desktop-scene { min-height: 0; }
   .pet-card { min-height: 430px; }
   .pet-stage { min-height: 285px; }
   .operation-menu { top: 12px; right: 0; }
