@@ -3,6 +3,13 @@ import CoreGraphics
 struct PetPeer: Codable, Hashable, Identifiable, Sendable {
     let id: String
     let name: String
+    let peerID: String?
+
+    init(id: String, name: String, peerID: String? = nil) {
+        self.id = id
+        self.name = name
+        self.peerID = peerID
+    }
 }
 
 enum PetScale: CGFloat, CaseIterable, Sendable {

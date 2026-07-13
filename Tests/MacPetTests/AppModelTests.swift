@@ -16,6 +16,17 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(model.emotion, .idle)
     }
 
+    func testStableProfileIDPersistsAcrossModelInstances() {
+        let suiteName = "MacPetTests.ProfileID.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let first = AppModel(service: LocalPetInteractionService(), defaults: defaults)
+        let second = AppModel(service: LocalPetInteractionService(), defaults: defaults)
+        XCTAssertEqual(first.peerID.count, 32)
+        XCTAssertEqual(first.peerID, first.peerID.lowercased())
+        XCTAssertEqual(first.peerID, second.peerID)
+    }
+
     func testDirectoryReturnsNamedPeer() async {
         let service = LocalPetInteractionService()
         let alice = PetPeer(id: "alice-device", name: "Alice")
@@ -129,6 +140,19 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(model.friends, [PetPeer(id: "new-room", name: "陈开心")])
         let restored = AppModel(service: LocalPetInteractionService(), defaults: defaults)
         XCTAssertEqual(restored.friends, [PetPeer(id: "new-room", name: "陈开心")])
+    }
+
+    func testStableIDsAllowDifferentFriendsToShareAName() throws {
+        let suiteName = "MacPetTests.FriendsStable.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let friends = [
+            PetPeer(id: "room-a", name: "小白", peerID: String(repeating: "a", count: 32)),
+            PetPeer(id: "room-b", name: "小白", peerID: String(repeating: "b", count: 32))
+        ]
+        defaults.set(try JSONEncoder().encode(friends), forKey: "com.macpet.friends")
+        let model = AppModel(service: LocalPetInteractionService(), defaults: defaults)
+        XCTAssertEqual(model.friends, friends)
     }
 
     func testProfileChangeBroadcastsWhenAlreadyPaired() async throws {

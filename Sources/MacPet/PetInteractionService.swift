@@ -1,8 +1,8 @@
 import Foundation
 
 enum PetConnectionUpdate: Equatable, Sendable {
-    case peerAvailable(name: String)
-    case peerRenamed(name: String)
+    case peerAvailable(name: String, peerID: String?)
+    case peerRenamed(name: String, peerID: String?)
     case peerUnavailable
     case connectionLost
     case connectionFailed(message: String)
@@ -10,7 +10,7 @@ enum PetConnectionUpdate: Equatable, Sendable {
 
 protocol PetInteractionService: Sendable {
     func availablePeers() async -> [PetPeer]
-    func pair(room: String, name: String) async
+    func pair(room: String, name: String, peerID: String) async
     func stop() async
     func updateName(_ name: String) async
     func send(_ event: PetEvent, to peerID: String) async
@@ -47,7 +47,7 @@ actor LocalPetInteractionService: PetInteractionService {
         peers
     }
 
-    func pair(room: String, name: String) async {}
+    func pair(room: String, name: String, peerID: String) async {}
     func stop() async {}
     func updateName(_ name: String) async { updatedNames.append(name) }
 
@@ -68,11 +68,11 @@ actor LocalPetInteractionService: PetInteractionService {
     }
 
     func simulatePeerRenamed(to name: String) {
-        connectionContinuation.yield(.peerRenamed(name: name))
+        connectionContinuation.yield(.peerRenamed(name: name, peerID: nil))
     }
 
     func simulatePeerAvailable(name: String) {
-        connectionContinuation.yield(.peerAvailable(name: name))
+        connectionContinuation.yield(.peerAvailable(name: name, peerID: nil))
     }
 
     func simulatePeerUnavailable() {
@@ -90,6 +90,7 @@ final class PublicPetInteractionService: @unchecked Sendable, PetInteractionServ
     private var task: URLSessionWebSocketTask?
     private var pairingRoom: String?
     private var pairingName: String?
+    private var pairingPeerID: String?
     private var reconnectTask: Task<Void, Never>?
     private var reconnectEnabled = false
 
@@ -114,14 +115,15 @@ final class PublicPetInteractionService: @unchecked Sendable, PetInteractionServ
     func incomingEvents() async -> AsyncStream<PetEvent> { stream }
     func connectionUpdates() async -> AsyncStream<PetConnectionUpdate> { connectionStream }
 
-    func pair(room: String, name: String) async {
+    func pair(room: String, name: String, peerID: String) async {
         reconnectTask?.cancel()
         reconnectTask = nil
         pairingRoom = room
         pairingName = name
+        pairingPeerID = peerID
         reconnectEnabled = true
         task?.cancel(with: .goingAway, reason: nil)
-        await connect(room: room, name: name)
+        await connect(room: room, name: name, peerID: peerID)
     }
 
     func stop() async {
@@ -130,6 +132,7 @@ final class PublicPetInteractionService: @unchecked Sendable, PetInteractionServ
         reconnectTask = nil
         pairingRoom = nil
         pairingName = nil
+        pairingPeerID = nil
         task?.cancel(with: .goingAway, reason: nil)
         task = nil
     }
@@ -140,14 +143,17 @@ final class PublicPetInteractionService: @unchecked Sendable, PetInteractionServ
 
     func updateName(_ name: String) async {
         pairingName = name
-        await sendJSON(["type": "profile", "name": name], through: task)
+        var payload = ["type": "profile", "name": name]
+        if let pairingPeerID { payload["peerID"] = pairingPeerID }
+        await sendJSON(payload, through: task)
     }
 
-    private func connect(room: String, name: String) async {
+    private func connect(room: String, name: String, peerID: String) async {
         let socket = URLSession.shared.webSocketTask(with: endpoint)
         task = socket
         socket.resume()
-        await sendJSON(["type": "join", "room": room, "name": name], through: socket)
+        let payload = ["type": "join", "room": room, "name": name, "peerID": peerID]
+        await sendJSON(payload, through: socket)
         receive(on: socket)
     }
 
@@ -185,27 +191,27 @@ final class PublicPetInteractionService: @unchecked Sendable, PetInteractionServ
            let sender = json["senderName"] as? String {
             continuation.yield(PetEvent(kind: kind, senderName: sender, frameName: frame))
         } else if json["type"] as? String == "profile", let name = json["peerName"] as? String {
-            connectionContinuation.yield(.peerRenamed(name: name))
+            connectionContinuation.yield(.peerRenamed(name: name, peerID: json["peerID"] as? String))
         } else if json["type"] as? String == "presence" {
             if let connected = json["connected"] as? Int, connected < 2 {
                 connectionContinuation.yield(.peerUnavailable)
             } else if let name = json["peerName"] as? String {
-                connectionContinuation.yield(.peerAvailable(name: name))
+                connectionContinuation.yield(.peerAvailable(name: name, peerID: json["peerID"] as? String))
             }
         } else if let name = json["peerName"] as? String {
-            connectionContinuation.yield(.peerAvailable(name: name))
+            connectionContinuation.yield(.peerAvailable(name: name, peerID: json["peerID"] as? String))
         }
     }
 
     private func handleConnectionLoss(for task: URLSessionWebSocketTask) {
         guard self.task === task, reconnectEnabled, pairingRoom != nil else { return }
         connectionContinuation.yield(.connectionLost)
-        guard reconnectTask == nil, let room = pairingRoom, let name = pairingName else { return }
+        guard reconnectTask == nil, let room = pairingRoom, let name = pairingName, let peerID = pairingPeerID else { return }
         reconnectTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(2))
             guard !Task.isCancelled, let self, self.reconnectEnabled else { return }
             self.reconnectTask = nil
-            await self.connect(room: room, name: name)
+            await self.connect(room: room, name: name, peerID: peerID)
         }
     }
 }

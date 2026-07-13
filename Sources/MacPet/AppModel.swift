@@ -20,6 +20,7 @@ final class AppModel {
     private(set) var nearbyPeers: [PetPeer] = []
     private(set) var pairedFriend: PetPeer?
     private(set) var friends: [PetPeer] = []
+    private(set) var peerID: String
     private(set) var ownerName: String
     private(set) var petName: String
     private(set) var petScale: PetScale
@@ -35,6 +36,9 @@ final class AppModel {
     init(service: any PetInteractionService, defaults: UserDefaults = .standard) {
         self.service = service
         self.defaults = defaults
+        let savedPeerID = defaults.string(forKey: "com.macpet.peer-id")?.lowercased()
+        peerID = savedPeerID.flatMap(Self.validProfileID) ?? Self.makeProfileID()
+        defaults.set(peerID, forKey: "com.macpet.peer-id")
         petScale = PetScale(rawValue: defaults.object(forKey: "com.macpet.pet-scale") as? CGFloat ?? 1) ?? .normal
         ownerName = defaults.string(forKey: "com.macpet.owner-name") ?? "我"
         petName = defaults.string(forKey: "com.macpet.pet-name") ?? "我的宠物"
@@ -66,16 +70,16 @@ final class AppModel {
             for await update in updates {
                 guard let self else { return }
                 switch update {
-                case let .peerAvailable(name):
+                case let .peerAvailable(name, remotePeerID):
                     guard let friend = self.pairedFriend else { continue }
-                    self.pairedFriend = PetPeer(id: friend.id, name: name)
+                    self.pairedFriend = PetPeer(id: friend.id, name: name, peerID: remotePeerID ?? friend.peerID)
                     self.saveFriend(self.pairedFriend!)
                     self.onPeersChange?()
                     self.setState(text: "已配对 \(name)", emotion: .happy, frameName: self.activeFrameName)
-                case let .peerRenamed(name):
+                case let .peerRenamed(name, remotePeerID):
                     guard let friend = self.pairedFriend else { continue }
                     let oldName = friend.name
-                    self.pairedFriend = PetPeer(id: friend.id, name: name)
+                    self.pairedFriend = PetPeer(id: friend.id, name: name, peerID: remotePeerID ?? friend.peerID)
                     self.saveFriend(self.pairedFriend!)
                     self.onPeersChange?()
                     let message = oldName == name || Self.isPendingFriendName(oldName) ? "已配对 \(name)" : "\(oldName) 改名为 \(name)"
@@ -122,7 +126,7 @@ final class AppModel {
 
     func selectFriend(_ friend: PetPeer) async {
         pairedFriend = friend
-        await service.pair(room: friend.id, name: petName)
+        await service.pair(room: friend.id, name: petName, peerID: peerID)
         onPeersChange?()
         setState(text: "正在连接 \(friend.name)", emotion: .happy, frameName: activeFrameName)
     }
@@ -130,9 +134,9 @@ final class AppModel {
     func createPublicPairing() async -> String {
         let code = Self.makePairingCode()
         pairedFriend = PetPeer(id: code, name: "配对码已创建")
-        await service.pair(room: code, name: petName)
+        await service.pair(room: code, name: petName, peerID: peerID)
         onPeersChange?()
-        setState(text: "配对码 (code) 已复制，发给朋友", emotion: .happy, frameName: activeFrameName)
+        setState(text: "配对码 \(code) 已复制，发给朋友", emotion: .happy, frameName: activeFrameName)
         return code
     }
 
@@ -143,7 +147,7 @@ final class AppModel {
             return
         }
         pairedFriend = PetPeer(id: normalized, name: "正在加入配对")
-        await service.pair(room: normalized, name: petName)
+        await service.pair(room: normalized, name: petName, peerID: peerID)
         onPeersChange?()
         setState(text: "已加入配对，等待朋友互动", emotion: .happy, frameName: activeFrameName)
     }
@@ -213,7 +217,11 @@ final class AppModel {
     }
 
     private func saveFriend(_ friend: PetPeer) {
-        friends.removeAll { $0.id == friend.id || $0.name == friend.name }
+        friends.removeAll {
+            $0.id == friend.id
+                || (friend.peerID != nil && $0.peerID == friend.peerID)
+                || (friend.peerID == nil && $0.peerID == nil && $0.name == friend.name)
+        }
         friends.append(friend)
         persistFriends()
     }
@@ -225,7 +233,11 @@ final class AppModel {
     private static func deduplicatedFriends(_ friends: [PetPeer]) -> [PetPeer] {
         var result: [PetPeer] = []
         for friend in friends {
-            result.removeAll { $0.name == friend.name }
+            result.removeAll {
+                $0.id == friend.id
+                    || (friend.peerID != nil && $0.peerID == friend.peerID)
+                    || (friend.peerID == nil && $0.peerID == nil && $0.name == friend.name)
+            }
             result.append(friend)
         }
         return result
@@ -237,6 +249,14 @@ final class AppModel {
 
     private static func makePairingCode() -> String {
         String((0..<8).compactMap { _ in pairingAlphabet.randomElement() })
+    }
+
+    private static func makeProfileID() -> String {
+        UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
+    }
+
+    private static func validProfileID(_ value: String) -> String? {
+        value.range(of: "^[a-f0-9]{32}$", options: .regularExpression) == nil ? nil : value
     }
 
     private static func isValidPairingCode(_ code: String) -> Bool {
