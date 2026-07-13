@@ -30,12 +30,19 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(model.pairedFriend?.name, "Alice")
     }
 
-    func testCreatedPairingCodeIsLowercaseAndRelayCompatible() async {
+    func testCreatedPairingCodeIsShortAndRelayCompatible() async {
         let model = AppModel(service: LocalPetInteractionService())
         let code = await model.createPublicPairing()
-        XCTAssertEqual(code.count, 64)
+        XCTAssertEqual(code.count, 8)
         XCTAssertEqual(code, code.lowercased())
-        XCTAssertNotNil(code.range(of: "^[a-f0-9]{64}$", options: .regularExpression))
+        XCTAssertNotNil(code.range(of: "^[a-hj-km-np-z2-9]{8}$", options: .regularExpression))
+    }
+
+    func testInteractionWhilePairingWaitsForFriend() async {
+        let model = AppModel(service: LocalPetInteractionService(responseDelay: .zero))
+        _ = await model.createPublicPairing()
+        await model.sendInteraction(kind: .poke)
+        XCTAssertEqual(model.bubbleText, "本地互动成功，配对后可拍朋友")
     }
 
     func testInteractionWithoutPairingStillShowsLocalEffect() async {
@@ -90,6 +97,18 @@ final class AppModelTests: XCTestCase {
         try await Task.sleep(for: .milliseconds(20))
         XCTAssertEqual(model.pairedFriend?.name, "阿梨")
         XCTAssertEqual(model.bubbleText, "Alice 改名为 阿梨")
+    }
+
+    func testPeerUnavailableKeepsFriendAndShowsReconnectNotice() async throws {
+        let service = LocalPetInteractionService(responseDelay: .zero)
+        let model = AppModel(service: service)
+        model.pair(with: PetPeer(id: "alice-device", name: "Alice"))
+        model.startListening()
+        await Task.yield()
+        await service.simulatePeerUnavailable()
+        try await Task.sleep(for: .milliseconds(20))
+        XCTAssertEqual(model.pairedFriend?.name, "Alice")
+        XCTAssertEqual(model.bubbleText, "朋友已离线，等待重连")
     }
 
     func testProfileChangeBroadcastsWhenAlreadyPaired() async throws {

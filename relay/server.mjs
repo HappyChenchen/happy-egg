@@ -1,7 +1,7 @@
 import http from 'node:http';
 import { WebSocketServer, WebSocket } from 'ws';
 
-const ROOM_PATTERN = /^[a-f0-9]{64}$/i;
+const ROOM_PATTERN = /^(?:[a-hj-km-np-z2-9]{8}|[a-f0-9]{64})$/i;
 const EVENT_KINDS = new Set(['poke', 'heart', 'celebrate']);
 const FRAME_NAMES = new Set([
   'ai_buddy_00', 'ai_buddy_03', 'ai_buddy_04', 'ai_buddy_05', 'ai_buddy_06',

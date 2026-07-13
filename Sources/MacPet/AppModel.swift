@@ -8,6 +8,7 @@ final class AppModel {
     }
 
     private let service: any PetInteractionService
+    private static let pairingAlphabet = Array("abcdefghjkmnpqrstuvwxyz23456789")
     private var listeningTask: Task<Void, Never>?
     private var peerRefreshTask: Task<Void, Never>?
     private var connectionTask: Task<Void, Never>?
@@ -60,18 +61,30 @@ final class AppModel {
         connectionTask = Task { [weak self] in
             let updates = await connectionService.connectionUpdates()
             for await update in updates {
-                guard let self, let friend = self.pairedFriend else { continue }
-                let name = update.name
-                let oldName = friend.name
-                self.pairedFriend = PetPeer(id: friend.id, name: name)
-                self.saveFriend(self.pairedFriend!)
-                self.onPeersChange?()
+                guard let self else { return }
                 switch update {
-                case .peerAvailable:
+                case let .peerAvailable(name):
+                    guard let friend = self.pairedFriend else { continue }
+                    self.pairedFriend = PetPeer(id: friend.id, name: name)
+                    self.saveFriend(self.pairedFriend!)
+                    self.onPeersChange?()
                     self.setState(text: "已配对 \(name)", emotion: .happy, frameName: self.activeFrameName)
-                case .peerRenamed:
+                case let .peerRenamed(name):
+                    guard let friend = self.pairedFriend else { continue }
+                    let oldName = friend.name
+                    self.pairedFriend = PetPeer(id: friend.id, name: name)
+                    self.saveFriend(self.pairedFriend!)
+                    self.onPeersChange?()
                     let message = oldName == name || Self.isPendingFriendName(oldName) ? "已配对 \(name)" : "\(oldName) 改名为 \(name)"
                     self.setState(text: message, emotion: .happy, frameName: self.activeFrameName)
+                case .peerUnavailable:
+                    guard self.pairedFriend != nil else { continue }
+                    self.setState(text: "朋友已离线，等待重连", emotion: .idle, frameName: self.activeFrameName)
+                case .connectionLost:
+                    guard self.pairedFriend != nil else { continue }
+                    self.setState(text: "连接已断开，正在重连", emotion: .idle, frameName: self.activeFrameName)
+                case let .connectionFailed(message):
+                    self.setState(text: message, emotion: .idle, frameName: self.activeFrameName)
                 }
             }
         }
@@ -101,6 +114,7 @@ final class AppModel {
     func unpair() {
         pairedFriend = nil
         onPeersChange?()
+        Task { await service.stop() }
     }
 
     func selectFriend(_ friend: PetPeer) async {
@@ -111,17 +125,17 @@ final class AppModel {
     }
 
     func createPublicPairing() async -> String {
-        let code = (UUID().uuidString.replacingOccurrences(of: "-", with: "") + UUID().uuidString.replacingOccurrences(of: "-", with: "")).lowercased()
+        let code = Self.makePairingCode()
         pairedFriend = PetPeer(id: code, name: "配对码已创建")
         await service.pair(room: code, name: petName)
         onPeersChange?()
-        setState(text: "配对码已复制，发给朋友", emotion: .happy, frameName: activeFrameName)
+        setState(text: "配对码 (code) 已复制，发给朋友", emotion: .happy, frameName: activeFrameName)
         return code
     }
 
     func joinPublicPairing(code: String) async {
-        let normalized = code.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
-        guard normalized.range(of: "^[0-9a-f]{64}$", options: .regularExpression) != nil else {
+        let normalized = code.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard Self.isValidPairingCode(normalized) else {
             setState(text: "配对码格式不正确", emotion: .idle, frameName: activeFrameName)
             return
         }
@@ -140,7 +154,7 @@ final class AppModel {
     func sendInteraction(kind: PetEvent.Kind, frameName: String? = nil) async {
         let selectedFrame = frameName ?? kind.defaultFrameName
         let safeFrame = BuddyFrames.names.contains(selectedFrame) ? selectedFrame : kind.defaultFrameName
-        guard let pairedFriend else {
+        guard let pairedFriend = confirmedFriend else {
             setState(text: "本地互动成功，配对后可拍朋友", emotion: .happy, frameName: safeFrame)
             return
         }
@@ -203,6 +217,15 @@ final class AppModel {
 
     private static func isPendingFriendName(_ name: String) -> Bool {
         name == "配对码已创建" || name == "正在加入配对"
+    }
+
+    private static func makePairingCode() -> String {
+        String((0..<8).compactMap { _ in pairingAlphabet.randomElement() })
+    }
+
+    private static func isValidPairingCode(_ code: String) -> Bool {
+        code.range(of: "^[a-hj-km-np-z2-9]{8}$", options: .regularExpression) != nil
+            || code.range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil
     }
 
     private static func cleanName(_ value: String, fallback: String) -> String {

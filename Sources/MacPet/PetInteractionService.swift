@@ -3,18 +3,15 @@ import Foundation
 enum PetConnectionUpdate: Equatable, Sendable {
     case peerAvailable(name: String)
     case peerRenamed(name: String)
-
-    var name: String {
-        switch self {
-        case let .peerAvailable(name), let .peerRenamed(name):
-            name
-        }
-    }
+    case peerUnavailable
+    case connectionLost
+    case connectionFailed(message: String)
 }
 
 protocol PetInteractionService: Sendable {
     func availablePeers() async -> [PetPeer]
     func pair(room: String, name: String) async
+    func stop() async
     func updateName(_ name: String) async
     func send(_ event: PetEvent, to peerID: String) async
     func incomingEvents() async -> AsyncStream<PetEvent>
@@ -51,6 +48,7 @@ actor LocalPetInteractionService: PetInteractionService {
     }
 
     func pair(room: String, name: String) async {}
+    func stop() async {}
     func updateName(_ name: String) async { updatedNames.append(name) }
 
     func updatedNameValues() -> [String] { updatedNames }
@@ -72,17 +70,24 @@ actor LocalPetInteractionService: PetInteractionService {
     func simulatePeerRenamed(to name: String) {
         connectionContinuation.yield(.peerRenamed(name: name))
     }
+
+    func simulatePeerUnavailable() {
+        connectionContinuation.yield(.peerUnavailable)
+    }
 }
 
 /// Public, server-mediated transport for friends who are not on the same Wi-Fi.
 final class PublicPetInteractionService: @unchecked Sendable, PetInteractionService {
     private let endpoint = URL(string: "wss://happypuppy.io/ws")!
-    private let deviceName = Host.current().localizedName ?? "一位朋友"
     private let stream: AsyncStream<PetEvent>
     private let continuation: AsyncStream<PetEvent>.Continuation
     private let connectionStream: AsyncStream<PetConnectionUpdate>
     private let connectionContinuation: AsyncStream<PetConnectionUpdate>.Continuation
     private var task: URLSessionWebSocketTask?
+    private var pairingRoom: String?
+    private var pairingName: String?
+    private var reconnectTask: Task<Void, Never>?
+    private var reconnectEnabled = false
 
     init() {
         var savedContinuation: AsyncStream<PetEvent>.Continuation!
@@ -93,7 +98,12 @@ final class PublicPetInteractionService: @unchecked Sendable, PetInteractionServ
         connectionContinuation = savedConnection
     }
 
-    deinit { task?.cancel(with: .goingAway, reason: nil); continuation.finish(); connectionContinuation.finish() }
+    deinit {
+        reconnectTask?.cancel()
+        task?.cancel(with: .goingAway, reason: nil)
+        continuation.finish()
+        connectionContinuation.finish()
+    }
 
     func availablePeers() async -> [PetPeer] { [] }
 
@@ -101,12 +111,23 @@ final class PublicPetInteractionService: @unchecked Sendable, PetInteractionServ
     func connectionUpdates() async -> AsyncStream<PetConnectionUpdate> { connectionStream }
 
     func pair(room: String, name: String) async {
+        reconnectTask?.cancel()
+        reconnectTask = nil
+        pairingRoom = room
+        pairingName = name
+        reconnectEnabled = true
         task?.cancel(with: .goingAway, reason: nil)
-        let task = URLSession.shared.webSocketTask(with: endpoint)
-        self.task = task
-        task.resume()
-        await sendJSON(["type": "join", "room": room, "name": name], through: task)
-        receive(on: task)
+        await connect(room: room, name: name)
+    }
+
+    func stop() async {
+        reconnectEnabled = false
+        reconnectTask?.cancel()
+        reconnectTask = nil
+        pairingRoom = nil
+        pairingName = nil
+        task?.cancel(with: .goingAway, reason: nil)
+        task = nil
     }
 
     func send(_ event: PetEvent, to peerID: String) async {
@@ -114,7 +135,16 @@ final class PublicPetInteractionService: @unchecked Sendable, PetInteractionServ
     }
 
     func updateName(_ name: String) async {
+        pairingName = name
         await sendJSON(["type": "profile", "name": name], through: task)
+    }
+
+    private func connect(room: String, name: String) async {
+        let socket = URLSession.shared.webSocketTask(with: endpoint)
+        task = socket
+        socket.resume()
+        await sendJSON(["type": "join", "room": room, "name": name], through: socket)
+        receive(on: socket)
     }
 
     private func sendJSON(_ object: [String: String], through task: URLSessionWebSocketTask?) async {
@@ -125,22 +155,53 @@ final class PublicPetInteractionService: @unchecked Sendable, PetInteractionServ
     private func receive(on task: URLSessionWebSocketTask) {
         task.receive { [weak self] result in
             guard let self else { return }
-            if case let .success(.string(text)) = result,
-               let data = text.data(using: .utf8),
-               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                if json["type"] as? String == "event",
-                   let kindText = json["kind"] as? String,
-                   let kind = PetEvent.Kind(rawValue: kindText),
-                   let frame = json["frameName"] as? String,
-                   let sender = json["senderName"] as? String {
-                    self.continuation.yield(PetEvent(kind: kind, senderName: sender, frameName: frame))
-                } else if json["type"] as? String == "profile", let name = json["peerName"] as? String {
-                    self.connectionContinuation.yield(.peerRenamed(name: name))
-                } else if let name = json["peerName"] as? String {
-                    self.connectionContinuation.yield(.peerAvailable(name: name))
-                }
+            guard self.task === task else { return }
+            switch result {
+            case let .success(.string(text)):
+                self.handleMessage(text)
+                self.receive(on: task)
+            case .success, .failure:
+                self.handleConnectionLoss(for: task)
             }
-            if case .success = result { self.receive(on: task) }
+        }
+    }
+
+    private func handleMessage(_ text: String) {
+        guard let data = text.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
+        if json["type"] as? String == "error" {
+            reconnectEnabled = false
+            connectionContinuation.yield(.connectionFailed(message: "配对失败，请检查配对码"))
+            return
+        }
+        if json["type"] as? String == "event",
+           let kindText = json["kind"] as? String,
+           let kind = PetEvent.Kind(rawValue: kindText),
+           let frame = json["frameName"] as? String,
+           let sender = json["senderName"] as? String {
+            continuation.yield(PetEvent(kind: kind, senderName: sender, frameName: frame))
+        } else if json["type"] as? String == "profile", let name = json["peerName"] as? String {
+            connectionContinuation.yield(.peerRenamed(name: name))
+        } else if json["type"] as? String == "presence" {
+            if let connected = json["connected"] as? Int, connected < 2 {
+                connectionContinuation.yield(.peerUnavailable)
+            } else if let name = json["peerName"] as? String {
+                connectionContinuation.yield(.peerAvailable(name: name))
+            }
+        } else if let name = json["peerName"] as? String {
+            connectionContinuation.yield(.peerAvailable(name: name))
+        }
+    }
+
+    private func handleConnectionLoss(for task: URLSessionWebSocketTask) {
+        guard self.task === task, reconnectEnabled, pairingRoom != nil else { return }
+        connectionContinuation.yield(.connectionLost)
+        guard reconnectTask == nil, let room = pairingRoom, let name = pairingName else { return }
+        reconnectTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(2))
+            guard !Task.isCancelled, let self, self.reconnectEnabled else { return }
+            self.reconnectTask = nil
+            await self.connect(room: room, name: name)
         }
     }
 }

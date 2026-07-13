@@ -79,10 +79,10 @@ final class PetView: NSView {
         } else {
             let pairingItem = NSMenuItem(title: "公网配对", action: nil, keyEquivalent: "")
             let pairingMenu = NSMenu()
-            let createItem = NSMenuItem(title: "创建配对码（复制）", action: #selector(createPublicPairing), keyEquivalent: "")
+            let createItem = NSMenuItem(title: "创建短配对码（复制）", action: #selector(createPublicPairing), keyEquivalent: "")
             createItem.target = self
             pairingMenu.addItem(createItem)
-            let joinItem = NSMenuItem(title: "从剪贴板加入配对", action: #selector(joinPublicPairing), keyEquivalent: "")
+            let joinItem = NSMenuItem(title: "从剪贴板加入短码", action: #selector(joinPublicPairing), keyEquivalent: "")
             joinItem.target = self
             pairingMenu.addItem(joinItem)
             pairingItem.submenu = pairingMenu

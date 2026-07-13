@@ -18,11 +18,5 @@
     <string>1</string>
     <key>LSUIElement</key>
     <true/>
-    <key>NSBonjourServices</key>
-    <array>
-        <string>_macpet-poke._tcp</string>
-    </array>
-    <key>NSLocalNetworkUsageDescription</key>
-    <string>MacPet 使用局域网自动发现朋友并发送拍一拍互动。</string>
 </dict>
 </plist>

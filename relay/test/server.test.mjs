@@ -65,7 +65,7 @@ test('matches uppercase and lowercase forms of the same pairing code', async (co
   const url = `ws://127.0.0.1:${address.port}/ws`;
   const [alice, bob] = await Promise.all([connect(url), connect(url)]);
   context.after(() => [alice, bob].forEach((socket) => socket.close()));
-  const uppercaseRoom = 'ABCDEF0123456789'.repeat(4);
+  const uppercaseRoom = 'ABCD2345';
   const lowercaseRoom = uppercaseRoom.toLowerCase();
 
   alice.send(JSON.stringify({ type: 'join', room: uppercaseRoom, name: 'Alice' }));
