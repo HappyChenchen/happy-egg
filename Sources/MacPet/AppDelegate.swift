@@ -1,5 +1,4 @@
 import AppKit
-import CoreImage
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -32,7 +31,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 let code = await self.model.createPublicPairing()
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(code, forType: .string)
-                self.showPairingCode(code)
             }
         } onJoinPublicPairing: { [weak self] in
             guard let code = NSPasteboard.general.string(forType: .string) else { return }
@@ -95,34 +93,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         alert.addButton(withTitle: "保存")
         alert.addButton(withTitle: "取消")
         if alert.runModal() == .alertFirstButtonReturn { model.setProfile(owner: owner.stringValue, pet: pet.stringValue) }
-    }
-
-    private func showPairingCode(_ code: String) {
-        let alert = NSAlert()
-        alert.messageText = "短配对码"
-        alert.informativeText = "已复制到剪贴板，有效期 10 分钟"
-        if let image = qrImage(for: code) {
-            let container = NSView(frame: NSRect(x: 0, y: 0, width: 240, height: 240))
-            let imageView = NSImageView(frame: container.bounds.insetBy(dx: 10, dy: 10))
-            imageView.image = image
-            imageView.imageScaling = .scaleProportionallyUpOrDown
-            container.addSubview(imageView)
-            alert.accessoryView = container
-        }
-        alert.addButton(withTitle: "完成")
-        alert.runModal()
-    }
-
-    private func qrImage(for code: String) -> NSImage? {
-        guard let data = code.data(using: .utf8),
-              let filter = CIFilter(name: "CIQRCodeGenerator") else { return nil }
-        filter.setValue(data, forKey: "inputMessage")
-        filter.setValue("H", forKey: "inputCorrectionLevel")
-        guard let output = filter.outputImage else { return nil }
-        let scaled = output.transformed(by: CGAffineTransform(scaleX: 10, y: 10))
-        let context = CIContext()
-        guard let cgImage = context.createCGImage(scaled, from: scaled.extent) else { return nil }
-        return NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
     }
 
     @objc private func pokeFriend() { Task { await model.sendInteraction(kind: .poke) } }

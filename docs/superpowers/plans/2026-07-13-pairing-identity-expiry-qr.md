@@ -2,13 +2,13 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 让长期好友使用稳定身份保存，未完成的邀请自动过期，并提供二维码展示短配对码。
+**Goal:** 让长期好友使用稳定身份保存，并让未完成的邀请自动过期；配对通过剪贴板传递短配对码。
 
 **Status:** Implementation completed; all tests, packaging, deployment, and public profile-ID handshake verified.
 
-**Architecture:** 客户端为每个安装生成持久化 32 位 profile ID，relay 在 `joined`、`presence` 和 `profile` 中转发该 ID；好友记录同时保存临时房间码和稳定 ID，旧记录没有 ID 时按名字兼容。relay 只对单人等待房间设置 10 分钟定时器，第二人加入后取消定时器；创建邀请后 AppKit 弹出短码和 Core Image QR 图。
+**Architecture:** 客户端为每个安装生成持久化 32 位 profile ID，relay 在 `joined`、`presence` 和 `profile` 中转发该 ID；好友记录同时保存临时房间码和稳定 ID，旧记录没有 ID 时按名字兼容。relay 只对单人等待房间设置 10 分钟定时器，第二人加入后取消定时器；创建邀请后短配对码复制到剪贴板。客户端拒绝与自身 profile ID 配对，并清理旧的同名自我好友记录。
 
-**Tech Stack:** Swift 6 / AppKit / CoreImage / URLSessionWebSocketTask / Node.js `ws` / XCTest / Node test runner.
+**Tech Stack:** Swift 6 / AppKit / URLSessionWebSocketTask / Node.js `ws` / XCTest / Node test runner.
 
 ---
 
@@ -44,16 +44,15 @@
 - [ ] Start a timer for a one-peer room, cancel it when a second peer joins or the room empties, and send an expiry error before closing sockets.
 - [ ] Map the expiry error to the existing client connection-failed status without retrying an invalid room.
 
-### Task 4: Show a QR invitation
+### Task 4: Keep clipboard-only invitations and filter self pairing
 
 **Files:**
 - Modify: `Sources/MacPet/AppDelegate.swift`
 - Modify: `Sources/MacPet/AppModel.swift`
 - Modify: `README.md`
 
-- [ ] Generate a QR image with `CIQRCodeGenerator` from the short code.
-- [ ] After copying a newly created code, show an AppKit alert with the code, QR image, and expiration note.
-- [ ] Keep clipboard join as the Mac-to-Mac path and document that the QR encodes the same short code.
+- [x] Keep invitation creation clipboard-only; remove the QR modal and Core Image dependency.
+- [x] Reject a peer that reports this installation's stable profile ID, and remove legacy same-name self records.
 
 ### Task 5: Verify, package, deploy, and publish
 
@@ -61,5 +60,5 @@
 - Modify: `docs/superpowers/plans/2026-07-13-pairing-identity-expiry-qr.md`
 
 - [ ] Run all Swift and relay tests.
-- [ ] Build `outputs/MacPet.app`, verify the QR-capable build and no removed assets.
+- [x] Build `outputs/MacPet.app`, verify the clipboard-only build and no removed assets.
 - [ ] Deploy relay to `/opt/macpet`, run public WSS short-code and expiry smoke tests, restart two local instances, commit `feat: 增强配对身份与邀请管理`, and push `main`.

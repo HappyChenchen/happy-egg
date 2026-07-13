@@ -67,12 +67,12 @@ actor LocalPetInteractionService: PetInteractionService {
         continuation.yield(PetEvent(senderName: name))
     }
 
-    func simulatePeerRenamed(to name: String) {
-        connectionContinuation.yield(.peerRenamed(name: name, peerID: nil))
+    func simulatePeerRenamed(to name: String, peerID: String? = nil) {
+        connectionContinuation.yield(.peerRenamed(name: name, peerID: peerID))
     }
 
-    func simulatePeerAvailable(name: String) {
-        connectionContinuation.yield(.peerAvailable(name: name, peerID: nil))
+    func simulatePeerAvailable(name: String, peerID: String? = nil) {
+        connectionContinuation.yield(.peerAvailable(name: name, peerID: peerID))
     }
 
     func simulatePeerUnavailable() {

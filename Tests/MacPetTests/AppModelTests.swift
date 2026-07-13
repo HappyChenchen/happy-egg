@@ -155,6 +155,40 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(model.friends, friends)
     }
 
+    func testSelfPeerIsNotSavedAsFriend() async throws {
+        let suiteName = "MacPetTests.SelfPairing.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        defaults.set("我的宠物", forKey: "com.macpet.pet-name")
+        let service = LocalPetInteractionService(responseDelay: .zero)
+        let model = AppModel(service: service, defaults: defaults)
+        model.pair(with: PetPeer(id: "same-room", name: "正在加入配对"))
+        model.startListening()
+        await Task.yield()
+        await service.simulatePeerAvailable(name: "我的宠物", peerID: model.peerID)
+        try await Task.sleep(for: .milliseconds(20))
+
+        XCTAssertNil(model.confirmedFriend)
+        XCTAssertNil(model.pairedFriend)
+        XCTAssertTrue(model.friends.isEmpty)
+        XCTAssertEqual(model.bubbleText, "不能和自己的宠物配对")
+    }
+
+    func testLegacySelfNamedFriendIsRemovedOnLoad() throws {
+        let suiteName = "MacPetTests.SelfFriendMigration.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        defaults.set("萌萌", forKey: "com.macpet.pet-name")
+        let saved = [
+            PetPeer(id: "self-room", name: "我的宠物"),
+            PetPeer(id: "friend-room", name: "朋友")
+        ]
+        defaults.set(try JSONEncoder().encode(saved), forKey: "com.macpet.friends")
+        let model = AppModel(service: LocalPetInteractionService(), defaults: defaults)
+
+        XCTAssertEqual(model.friends, [PetPeer(id: "friend-room", name: "朋友")])
+    }
+
     func testProfileChangeBroadcastsWhenAlreadyPaired() async throws {
         let service = LocalPetInteractionService(responseDelay: .zero)
         let suiteName = "MacPetTests.Profile.\(UUID().uuidString)"

@@ -9,6 +9,7 @@ final class AppModel {
 
     private let service: any PetInteractionService
     private static let pairingAlphabet = Array("abcdefghjkmnpqrstuvwxyz23456789")
+    private static let legacyDefaultPetName = "我的宠物"
     private var listeningTask: Task<Void, Never>?
     private var peerRefreshTask: Task<Void, Never>?
     private var connectionTask: Task<Void, Never>?
@@ -43,7 +44,7 @@ final class AppModel {
         ownerName = defaults.string(forKey: "com.macpet.owner-name") ?? "我"
         petName = defaults.string(forKey: "com.macpet.pet-name") ?? "我的宠物"
         if let data = defaults.data(forKey: "com.macpet.friends"), let saved = try? JSONDecoder().decode([PetPeer].self, from: data) {
-            friends = Self.deduplicatedFriends(saved)
+            friends = Self.deduplicatedFriends(saved).filter { !Self.isSelfFriend($0, peerID: peerID, petName: petName) }
             if friends != saved { persistFriends() }
         }
     }
@@ -72,12 +73,20 @@ final class AppModel {
                 switch update {
                 case let .peerAvailable(name, remotePeerID):
                     guard let friend = self.pairedFriend else { continue }
+                    if self.isSelfPeer(name: name, remotePeerID: remotePeerID) {
+                        self.rejectSelfPairing()
+                        continue
+                    }
                     self.pairedFriend = PetPeer(id: friend.id, name: name, peerID: remotePeerID ?? friend.peerID)
                     self.saveFriend(self.pairedFriend!)
                     self.onPeersChange?()
                     self.setState(text: "已配对 \(name)", emotion: .happy, frameName: self.activeFrameName)
                 case let .peerRenamed(name, remotePeerID):
                     guard let friend = self.pairedFriend else { continue }
+                    if self.isSelfPeer(name: name, remotePeerID: remotePeerID) {
+                        self.rejectSelfPairing()
+                        continue
+                    }
                     let oldName = friend.name
                     self.pairedFriend = PetPeer(id: friend.id, name: name, peerID: remotePeerID ?? friend.peerID)
                     self.saveFriend(self.pairedFriend!)
@@ -217,6 +226,7 @@ final class AppModel {
     }
 
     private func saveFriend(_ friend: PetPeer) {
+        guard !isSelfFriend(friend) else { return }
         friends.removeAll {
             $0.id == friend.id
                 || (friend.peerID != nil && $0.peerID == friend.peerID)
@@ -228,6 +238,26 @@ final class AppModel {
 
     private func persistFriends() {
         if let data = try? JSONEncoder().encode(friends) { defaults.set(data, forKey: "com.macpet.friends") }
+    }
+
+    private func isSelfFriend(_ friend: PetPeer) -> Bool {
+        Self.isSelfFriend(friend, peerID: peerID, petName: petName)
+    }
+
+    private static func isSelfFriend(_ friend: PetPeer, peerID: String, petName: String) -> Bool {
+        friend.peerID == peerID
+            || (friend.peerID == nil && (friend.name == petName || friend.name == legacyDefaultPetName))
+    }
+
+    private func isSelfPeer(name: String, remotePeerID: String?) -> Bool {
+        remotePeerID == peerID || (remotePeerID == nil && (name == petName || name == Self.legacyDefaultPetName))
+    }
+
+    private func rejectSelfPairing() {
+        pairedFriend = nil
+        onPeersChange?()
+        setState(text: "不能和自己的宠物配对", emotion: .idle, frameName: activeFrameName)
+        Task { await service.stop() }
     }
 
     private static func deduplicatedFriends(_ friends: [PetPeer]) -> [PetPeer] {
