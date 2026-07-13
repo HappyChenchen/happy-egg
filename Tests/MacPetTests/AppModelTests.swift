@@ -111,6 +111,26 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(model.bubbleText, "朋友已离线，等待重连")
     }
 
+    func testSameNamedFriendKeepsOnlyNewestPairing() async throws {
+        let suiteName = "MacPetTests.Friends.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let service = LocalPetInteractionService(responseDelay: .zero)
+        let model = AppModel(service: service, defaults: defaults)
+        model.pair(with: PetPeer(id: "old-room", name: "陈开心"))
+        model.startListening()
+        await Task.yield()
+        await service.simulatePeerAvailable(name: "陈开心")
+        try await Task.sleep(for: .milliseconds(20))
+        model.pair(with: PetPeer(id: "new-room", name: "陈开心"))
+        await service.simulatePeerAvailable(name: "陈开心")
+        try await Task.sleep(for: .milliseconds(20))
+
+        XCTAssertEqual(model.friends, [PetPeer(id: "new-room", name: "陈开心")])
+        let restored = AppModel(service: LocalPetInteractionService(), defaults: defaults)
+        XCTAssertEqual(restored.friends, [PetPeer(id: "new-room", name: "陈开心")])
+    }
+
     func testProfileChangeBroadcastsWhenAlreadyPaired() async throws {
         let service = LocalPetInteractionService(responseDelay: .zero)
         let suiteName = "MacPetTests.Profile.\(UUID().uuidString)"

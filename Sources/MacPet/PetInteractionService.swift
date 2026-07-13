@@ -71,6 +71,10 @@ actor LocalPetInteractionService: PetInteractionService {
         connectionContinuation.yield(.peerRenamed(name: name))
     }
 
+    func simulatePeerAvailable(name: String) {
+        connectionContinuation.yield(.peerAvailable(name: name))
+    }
+
     func simulatePeerUnavailable() {
         connectionContinuation.yield(.peerUnavailable)
     }

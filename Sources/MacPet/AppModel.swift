@@ -38,7 +38,10 @@ final class AppModel {
         petScale = PetScale(rawValue: defaults.object(forKey: "com.macpet.pet-scale") as? CGFloat ?? 1) ?? .normal
         ownerName = defaults.string(forKey: "com.macpet.owner-name") ?? "我"
         petName = defaults.string(forKey: "com.macpet.pet-name") ?? "我的宠物"
-        if let data = defaults.data(forKey: "com.macpet.friends"), let saved = try? JSONDecoder().decode([PetPeer].self, from: data) { friends = saved }
+        if let data = defaults.data(forKey: "com.macpet.friends"), let saved = try? JSONDecoder().decode([PetPeer].self, from: data) {
+            friends = Self.deduplicatedFriends(saved)
+            if friends != saved { persistFriends() }
+        }
     }
 
     deinit {
@@ -210,9 +213,22 @@ final class AppModel {
     }
 
     private func saveFriend(_ friend: PetPeer) {
-        friends.removeAll { $0.id == friend.id }
+        friends.removeAll { $0.id == friend.id || $0.name == friend.name }
         friends.append(friend)
+        persistFriends()
+    }
+
+    private func persistFriends() {
         if let data = try? JSONEncoder().encode(friends) { defaults.set(data, forKey: "com.macpet.friends") }
+    }
+
+    private static func deduplicatedFriends(_ friends: [PetPeer]) -> [PetPeer] {
+        var result: [PetPeer] = []
+        for friend in friends {
+            result.removeAll { $0.name == friend.name }
+            result.append(friend)
+        }
+        return result
     }
 
     private static func isPendingFriendName(_ name: String) -> Bool {
