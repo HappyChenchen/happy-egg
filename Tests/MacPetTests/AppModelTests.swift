@@ -27,6 +27,24 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(first.peerID, second.peerID)
     }
 
+    func testInstanceLaunchArgumentsUseSeparateDefaultsSuites() {
+        let instanceA = "test-a-\(UUID().uuidString.prefix(8))"
+        let instanceB = "test-b-\(UUID().uuidString.prefix(8))"
+        let defaultsA = AppModel.launchDefaults(arguments: ["MacPet", "--instance", instanceA])
+        let defaultsB = AppModel.launchDefaults(arguments: ["MacPet", "--instance", instanceB])
+        defer {
+            defaultsA.removePersistentDomain(forName: "com.macpet.prototype.instance.\(instanceA.lowercased())")
+            defaultsB.removePersistentDomain(forName: "com.macpet.prototype.instance.\(instanceB.lowercased())")
+        }
+
+        defaultsA.set("小A", forKey: "com.macpet.pet-name")
+        defaultsB.set("小B", forKey: "com.macpet.pet-name")
+        let modelA = AppModel(service: LocalPetInteractionService(), defaults: defaultsA)
+        let modelB = AppModel(service: LocalPetInteractionService(), defaults: defaultsB)
+        XCTAssertNotEqual(modelA.peerID, modelB.peerID)
+        XCTAssertNotEqual(modelA.petName, modelB.petName)
+    }
+
     func testDirectoryReturnsNamedPeer() async {
         let service = LocalPetInteractionService()
         let alice = PetPeer(id: "alice-device", name: "Alice")

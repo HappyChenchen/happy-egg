@@ -2,7 +2,7 @@ import AppKit
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    private let model = AppModel(service: PublicPetInteractionService())
+    private let model = AppModel(service: PublicPetInteractionService(), defaults: AppModel.launchDefaults())
     private var panelController: PetPanelController!
     private var statusItem: NSStatusItem!
     private var visibilityItem: NSMenuItem!

@@ -28,6 +28,15 @@ swift run MacPet
 
 未配对时，左键仍会播放本地表情和互动气泡；右键发送动作会在配对完成后才出现，同样的点击才会同时发送给朋友。
 
+本地测试两个实例时，可以使用独立配置启动：
+
+```sh
+./outputs/MacPet.app/Contents/MacOS/MacPet --instance A
+./outputs/MacPet.app/Contents/MacOS/MacPet --instance B
+```
+
+带 `--instance` 的实例会使用独立的宠物资料、好友列表和 profile ID；不带参数正常启动时仍使用正式配置。
+
 ## 两台 Mac 公网配对
 
 1. A 右键宠物 → 公网配对 → 创建配对码（复制），把复制的 8 位代码发给 B。

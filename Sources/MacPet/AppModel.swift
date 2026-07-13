@@ -29,6 +29,15 @@ final class AppModel {
     var onPeersChange: (() -> Void)?
     var onScaleChange: (() -> Void)?
 
+    static func launchDefaults(arguments: [String] = ProcessInfo.processInfo.arguments) -> UserDefaults {
+        guard let index = arguments.firstIndex(of: "--instance"),
+              arguments.indices.contains(index + 1) else { return .standard }
+        let rawID = arguments[index + 1]
+        guard rawID.range(of: "^[A-Za-z0-9_-]{1,32}$", options: .regularExpression) != nil else { return .standard }
+        let suiteName = "com.macpet.prototype.instance.\(rawID.lowercased())"
+        return UserDefaults(suiteName: suiteName) ?? .standard
+    }
+
     var confirmedFriend: PetPeer? {
         guard let pairedFriend, !Self.isPendingFriendName(pairedFriend.name) else { return nil }
         return pairedFriend
