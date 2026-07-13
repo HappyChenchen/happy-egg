@@ -86,7 +86,10 @@ final class AppModelTests: XCTestCase {
 
     func testProfileChangeBroadcastsWhenAlreadyPaired() async throws {
         let service = LocalPetInteractionService(responseDelay: .zero)
-        let model = AppModel(service: service)
+        let suiteName = "MacPetTests.Profile.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let model = AppModel(service: service, defaults: defaults)
         model.pair(with: PetPeer(id: "alice-device", name: "Alice"))
         model.setProfile(owner: " 我 ", pet: " 小蛋 ")
         try await Task.sleep(for: .milliseconds(20))

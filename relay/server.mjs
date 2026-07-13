@@ -5,7 +5,7 @@ const ROOM_PATTERN = /^[a-f0-9]{64}$/;
 const EVENT_KINDS = new Set(['poke', 'heart', 'celebrate']);
 const FRAME_NAMES = new Set([
   'ai_buddy_00', 'ai_buddy_03', 'ai_buddy_04', 'ai_buddy_05', 'ai_buddy_06',
-  'ai_buddy_07', 'ai_buddy_08', 'ai_buddy_09', 'ai_buddy_10', 'ai_buddy_11', 'ai_buddy_12'
+  'ai_buddy_07', 'ai_buddy_08', 'ai_buddy_09', 'ai_buddy_10', 'ai_buddy_11'
 ]);
 
 function send(socket, payload) {
