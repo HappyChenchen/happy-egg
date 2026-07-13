@@ -16,6 +16,24 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(model.emotion, .idle)
     }
 
+    func testNewProfileUsesFriendlyDefaultPetName() {
+        let suiteName = "MacPetTests.DefaultPetName.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let model = AppModel(service: LocalPetInteractionService(), defaults: defaults)
+        XCTAssertEqual(model.petName, "团团")
+    }
+
+    func testLegacyPlaceholderPetNameMigratesToDefault() {
+        let suiteName = "MacPetTests.DefaultPetNameMigration.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        defaults.set("我的宠物", forKey: "com.macpet.pet-name")
+        let model = AppModel(service: LocalPetInteractionService(), defaults: defaults)
+        XCTAssertEqual(model.petName, "团团")
+        XCTAssertEqual(defaults.string(forKey: "com.macpet.pet-name"), "团团")
+    }
+
     func testStableProfileIDPersistsAcrossModelInstances() {
         let suiteName = "MacPetTests.ProfileID.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!

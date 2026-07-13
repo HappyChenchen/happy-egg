@@ -9,6 +9,7 @@ final class AppModel {
 
     private let service: any PetInteractionService
     private static let pairingAlphabet = Array("abcdefghjkmnpqrstuvwxyz23456789")
+    private static let defaultPetName = "团团"
     private static let legacyDefaultPetName = "我的宠物"
     private var listeningTask: Task<Void, Never>?
     private var peerRefreshTask: Task<Void, Never>?
@@ -56,7 +57,9 @@ final class AppModel {
         defaults.set(peerID, forKey: "com.macpet.peer-id")
         petScale = PetScale(rawValue: defaults.object(forKey: "com.macpet.pet-scale") as? CGFloat ?? 1) ?? .normal
         ownerName = defaults.string(forKey: "com.macpet.owner-name") ?? "我"
-        petName = defaults.string(forKey: "com.macpet.pet-name") ?? "我的宠物"
+        let savedPetName = defaults.string(forKey: "com.macpet.pet-name")
+        petName = savedPetName == Self.legacyDefaultPetName ? Self.defaultPetName : (savedPetName ?? Self.defaultPetName)
+        if savedPetName == Self.legacyDefaultPetName { defaults.set(Self.defaultPetName, forKey: "com.macpet.pet-name") }
         if let data = defaults.data(forKey: "com.macpet.friends"), let saved = try? JSONDecoder().decode([PetPeer].self, from: data) {
             friends = Self.deduplicatedFriends(saved).filter { !Self.isSelfFriend($0, peerID: peerID, petName: petName) }
             if friends != saved { persistFriends() }
@@ -227,7 +230,7 @@ final class AppModel {
     func setProfile(owner: String, pet: String) {
         let oldPetName = petName
         ownerName = Self.cleanName(owner, fallback: "我")
-        petName = Self.cleanName(pet, fallback: "我的宠物")
+        petName = Self.cleanName(pet, fallback: Self.defaultPetName)
         defaults.set(ownerName, forKey: "com.macpet.owner-name")
         defaults.set(petName, forKey: "com.macpet.pet-name")
         guard oldPetName != petName, confirmedFriend != nil else { return }
