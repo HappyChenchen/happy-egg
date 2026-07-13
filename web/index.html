@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>团团 · 网页联动台</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@500;600;700;800&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></div>
+        <div>
+          <p class="eyebrow">MACPET / LOCAL COMPANION</p>
+          <h1>网页联动台</h1>
+        </div>
+        <div class="connection-pill" id="connection-pill" data-state="idle">
+          <i></i><span id="connection-label">未连接</span>
+        </div>
+      </header>
+
+      <section class="hero-grid">
+        <section class="pet-card" aria-live="polite">
+          <div class="pet-card-top">
+            <span class="section-kicker">当前宠物</span>
+            <span class="pet-code" id="pet-code">等待配对</span>
+          </div>
+          <div class="pet-stage" id="pet-stage">
+            <div class="orbit orbit-one"></div>
+            <div class="orbit orbit-two"></div>
+            <div class="spark spark-one">✦</div>
+            <div class="spark spark-two">·</div>
+            <img id="pet-image" src="../Sources/MacPet/Resources/ai_buddy_05.png" alt="宠物形象" />
+            <div class="pet-wave"></div>
+          </div>
+          <div class="pet-caption">
+            <span class="status-dot" id="pet-status-dot"></span>
+            <div>
+              <h2 id="pet-name">还没有连接</h2>
+              <p id="pet-message">输入配对码，让网页和 MacPet 打个招呼。</p>
+            </div>
+          </div>
+        </section>
+
+        <section class="control-card">
+          <div class="card-heading">
+            <div>
+              <span class="section-kicker">PAIRING</span>
+              <h2>连接你的宠物</h2>
+            </div>
+            <span class="step-badge">01</span>
+          </div>
+          <label class="field-label" for="pairing-code">短配对码</label>
+          <div class="code-row">
+            <input id="pairing-code" maxlength="64" inputmode="text" autocomplete="off" placeholder="输入 8 位代码" />
+            <button class="primary-button" id="connect-button" type="button">连接</button>
+          </div>
+          <label class="field-label" for="web-name">网页端名字</label>
+          <input class="text-input" id="web-name" maxlength="20" value="网页宠物" autocomplete="off" />
+          <p class="field-hint">MacPet 右键 → 公网配对 → 创建短配对码，然后把代码填到这里。</p>
+          <div class="divider"></div>
+          <div class="endpoint-row">
+            <span>Relay</span>
+            <code id="relay-label">wss://happypuppy.io/ws</code>
+          </div>
+          <button class="quiet-button" id="disconnect-button" type="button" disabled>断开当前连接</button>
+        </section>
+      </section>
+
+      <section class="interaction-card">
+        <div class="interaction-heading">
+          <div>
+            <span class="section-kicker">REMOTE ACTIONS</span>
+            <h2>和宠物互动</h2>
+          </div>
+          <p id="action-hint">连接后即可发送动作</p>
+        </div>
+        <div class="action-grid">
+          <button class="action-button action-poke" data-kind="poke" type="button" disabled>
+            <span class="action-icon">↗</span><span>拍一拍</span><small>POKE</small>
+          </button>
+          <button class="action-button action-heart" data-kind="heart" type="button" disabled>
+            <span class="action-icon">♥</span><span>送爱心</span><small>HEART</small>
+          </button>
+          <button class="action-button action-celebrate" data-kind="celebrate" type="button" disabled>
+            <span class="action-icon">✦</span><span>一起庆祝</span><small>CELEBRATE</small>
+          </button>
+        </div>
+      </section>
+
+      <footer class="footer-row">
+        <span>本地网页 MVP · 使用现有 MacPet relay</span>
+        <span id="event-log">尚未有互动记录</span>
+      </footer>
+    </main>
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>
