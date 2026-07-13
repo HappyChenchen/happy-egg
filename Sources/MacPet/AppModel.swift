@@ -10,6 +10,7 @@ final class AppModel {
     private let service: any PetInteractionService
     private var listeningTask: Task<Void, Never>?
     private var peerRefreshTask: Task<Void, Never>?
+    private var connectionTask: Task<Void, Never>?
     private let defaults: UserDefaults
 
     private(set) var bubbleText: String?
@@ -22,6 +23,13 @@ final class AppModel {
     var onPeersChange: (() -> Void)?
     var onScaleChange: (() -> Void)?
 
+    var confirmedFriend: PetPeer? {
+        guard let pairedFriend,
+              pairedFriend.name != "配对码已创建",
+              pairedFriend.name != "正在加入配对" else { return nil }
+        return pairedFriend
+    }
+
     init(service: any PetInteractionService, defaults: UserDefaults = .standard) {
         self.service = service
         self.defaults = defaults
@@ -31,6 +39,7 @@ final class AppModel {
     deinit {
         listeningTask?.cancel()
         peerRefreshTask?.cancel()
+        connectionTask?.cancel()
     }
 
     func startListening() {
@@ -41,6 +50,16 @@ final class AppModel {
             for await event in events {
                 guard !Task.isCancelled else { return }
                 self?.receive(event)
+            }
+        }
+        let connectionService = service
+        connectionTask = Task { [weak self] in
+            let updates = await connectionService.connectionUpdates()
+            for await name in updates {
+                guard let self, let friend = self.pairedFriend else { continue }
+                self.pairedFriend = PetPeer(id: friend.id, name: name)
+                self.onPeersChange?()
+                self.setState(text: "已配对 \(name)", emotion: .happy, frameName: self.activeFrameName)
             }
         }
     }
@@ -73,7 +92,7 @@ final class AppModel {
 
     func createPublicPairing() async -> String {
         let code = UUID().uuidString.replacingOccurrences(of: "-", with: "") + UUID().uuidString.replacingOccurrences(of: "-", with: "")
-        pairedFriend = PetPeer(id: code, name: "等待朋友加入")
+        pairedFriend = PetPeer(id: code, name: "配对码已创建")
         await service.pair(room: code, name: Host.current().localizedName ?? "我")
         onPeersChange?()
         setState(text: "配对码已复制，发给朋友", emotion: .happy, frameName: activeFrameName)
@@ -86,7 +105,7 @@ final class AppModel {
             setState(text: "配对码格式不正确", emotion: .idle, frameName: activeFrameName)
             return
         }
-        pairedFriend = PetPeer(id: normalized, name: "公网朋友")
+        pairedFriend = PetPeer(id: normalized, name: "正在加入配对")
         await service.pair(room: normalized, name: Host.current().localizedName ?? "我")
         onPeersChange?()
         setState(text: "已加入配对，等待朋友互动", emotion: .happy, frameName: activeFrameName)
@@ -110,7 +129,7 @@ final class AppModel {
     }
 
     private func receive(_ event: PetEvent) {
-        if pairedFriend?.name == "等待朋友加入" || pairedFriend?.name == "公网朋友" {
+        if pairedFriend?.name == "配对码已创建" || pairedFriend?.name == "正在加入配对" {
             pairedFriend = PetPeer(id: pairedFriend!.id, name: event.senderName)
             onPeersChange?()
         }

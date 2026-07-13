@@ -78,10 +78,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func pokeFriend() { Task { await model.sendInteraction(kind: .poke) } }
 
     private func updateMenuState() {
-        if let friend = model.pairedFriend {
+        if let friend = model.confirmedFriend {
             pairingStatusItem?.title = "已配对 · \(friend.name)"
             interactionItem?.title = "拍一拍 \(friend.name)"
             interactionItem?.isEnabled = true
+        } else if model.pairedFriend?.name == "配对码已创建" {
+            pairingStatusItem?.title = "公网配对 · 等待朋友加入"
+            interactionItem?.title = "等待朋友加入后可互动"
+            interactionItem?.isEnabled = false
+        } else if model.pairedFriend?.name == "正在加入配对" {
+            pairingStatusItem?.title = "公网配对 · 正在加入"
+            interactionItem?.title = "等待配对确认"
+            interactionItem?.isEnabled = false
         } else {
             pairingStatusItem?.title = "公网模式 · 尚未配对"
             interactionItem?.title = "请先右键宠物配对"
