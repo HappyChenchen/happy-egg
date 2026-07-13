@@ -89,17 +89,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func editProfile() {
         let alert = NSAlert()
-        alert.messageText = "宠物资料"
-        let owner = NSTextField(string: model.ownerName)
+        alert.messageText = "我的宠物"
+        alert.informativeText = "给宠物取一个名字"
         let pet = NSTextField(string: model.petName)
-        let stack = NSStackView(views: [NSTextField(labelWithString: "主人名"), owner, NSTextField(labelWithString: "宠物名"), pet])
+        pet.font = NSFont.systemFont(ofSize: 16)
+        pet.controlSize = .large
+        pet.translatesAutoresizingMaskIntoConstraints = false
+        pet.widthAnchor.constraint(equalToConstant: 360).isActive = true
+        let stack = NSStackView(views: [NSTextField(labelWithString: "宠物名字"), pet])
         stack.orientation = .vertical
-        stack.spacing = 6
-        stack.frame = NSRect(x: 0, y: 0, width: 260, height: 100)
+        stack.spacing = 8
+        stack.frame = NSRect(x: 0, y: 0, width: 360, height: 60)
         alert.accessoryView = stack
         alert.addButton(withTitle: "保存")
         alert.addButton(withTitle: "取消")
-        if alert.runModal() == .alertFirstButtonReturn { model.setProfile(owner: owner.stringValue, pet: pet.stringValue) }
+        if alert.runModal() == .alertFirstButtonReturn { model.setProfile(owner: model.ownerName, pet: pet.stringValue) }
     }
 
     @objc private func pokeFriend() { Task { await model.sendInteraction(kind: .poke) } }
