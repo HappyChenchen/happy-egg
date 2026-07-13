@@ -163,7 +163,7 @@ function openMenu() { operationMenu.hidden = false; menuButton.setAttribute('ari
 function closeMenu() { operationMenu.hidden = true; menuButton.setAttribute('aria-expanded', 'false'); }
 function togglePetVisibility() {
   const hidden = petCard.classList.toggle('is-hidden');
-  hideButton.innerHTML = `${hidden ? '显示宠物' : '隐藏宠物'} <span>⌘</span>`;
+  hideButton.textContent = hidden ? '显示宠物' : '隐藏宠物';
   closeMenu();
 }
 function setPetScale(scale) {
