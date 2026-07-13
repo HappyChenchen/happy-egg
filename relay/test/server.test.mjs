@@ -57,3 +57,21 @@ test('forwards profile changes and uses the new name for later events', async (c
   alice.send(JSON.stringify({ type: 'event', kind: 'poke', frameName: 'ai_buddy_00' }));
   assert.deepEqual(await received, { type: 'event', kind: 'poke', frameName: 'ai_buddy_00', senderName: 'Alicia' });
 });
+
+test('matches uppercase and lowercase forms of the same pairing code', async (context) => {
+  const relay = createRelayServer();
+  const address = await relay.listen(0, '127.0.0.1');
+  context.after(async () => relay.close());
+  const url = `ws://127.0.0.1:${address.port}/ws`;
+  const [alice, bob] = await Promise.all([connect(url), connect(url)]);
+  context.after(() => [alice, bob].forEach((socket) => socket.close()));
+  const uppercaseRoom = 'ABCDEF0123456789'.repeat(4);
+  const lowercaseRoom = uppercaseRoom.toLowerCase();
+
+  alice.send(JSON.stringify({ type: 'join', room: uppercaseRoom, name: 'Alice' }));
+  assert.deepEqual(await nextMessage(alice), { type: 'joined', connected: 1, peerName: null });
+  const alicePresence = nextMessage(alice);
+  bob.send(JSON.stringify({ type: 'join', room: lowercaseRoom, name: 'Bob' }));
+  assert.deepEqual(await nextMessage(bob), { type: 'joined', connected: 2, peerName: 'Alice' });
+  assert.deepEqual(await alicePresence, { type: 'presence', connected: 2, peerName: 'Bob' });
+});

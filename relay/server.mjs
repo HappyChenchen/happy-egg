@@ -1,7 +1,7 @@
 import http from 'node:http';
 import { WebSocketServer, WebSocket } from 'ws';
 
-const ROOM_PATTERN = /^[a-f0-9]{64}$/;
+const ROOM_PATTERN = /^[a-f0-9]{64}$/i;
 const EVENT_KINDS = new Set(['poke', 'heart', 'celebrate']);
 const FRAME_NAMES = new Set([
   'ai_buddy_00', 'ai_buddy_03', 'ai_buddy_04', 'ai_buddy_05', 'ai_buddy_06',
@@ -59,12 +59,13 @@ export function createRelayServer() {
 
       if (message.type === 'join') {
         if (!ROOM_PATTERN.test(message.room) || !validName(message.name)) return reject(socket, 'invalid join');
+        const roomID = message.room.toLowerCase();
         leave(socket);
-        const room = rooms.get(message.room) ?? new Set();
+        const room = rooms.get(roomID) ?? new Set();
         if (room.size >= 2) return reject(socket, 'room is full');
         room.add(socket);
-        rooms.set(message.room, room);
-        metadata.set(socket, { room: message.room, name: message.name.trim(), sentAt: [] });
+        rooms.set(roomID, room);
+        metadata.set(socket, { room: roomID, name: message.name.trim(), sentAt: [] });
         const existingPeer = [...room].find((peer) => peer !== socket);
         send(socket, { type: 'joined', connected: room.size, peerName: existingPeer ? metadata.get(existingPeer).name : null });
         for (const peer of room) if (peer !== socket) send(peer, { type: 'presence', connected: room.size, peerName: message.name.trim() });

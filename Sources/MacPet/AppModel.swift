@@ -111,7 +111,7 @@ final class AppModel {
     }
 
     func createPublicPairing() async -> String {
-        let code = UUID().uuidString.replacingOccurrences(of: "-", with: "") + UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        let code = (UUID().uuidString.replacingOccurrences(of: "-", with: "") + UUID().uuidString.replacingOccurrences(of: "-", with: "")).lowercased()
         pairedFriend = PetPeer(id: code, name: "配对码已创建")
         await service.pair(room: code, name: petName)
         onPeersChange?()

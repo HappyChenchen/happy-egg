@@ -30,6 +30,14 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(model.pairedFriend?.name, "Alice")
     }
 
+    func testCreatedPairingCodeIsLowercaseAndRelayCompatible() async {
+        let model = AppModel(service: LocalPetInteractionService())
+        let code = await model.createPublicPairing()
+        XCTAssertEqual(code.count, 64)
+        XCTAssertEqual(code, code.lowercased())
+        XCTAssertNotNil(code.range(of: "^[a-f0-9]{64}$", options: .regularExpression))
+    }
+
     func testInteractionWithoutPairingStillShowsLocalEffect() async {
         let model = AppModel(service: LocalPetInteractionService())
         await model.sendInteraction(kind: .poke, frameName: "ai_buddy_07")
