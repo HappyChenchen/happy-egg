@@ -24,6 +24,14 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(model.petName, "团团")
     }
 
+    func testLocalInstanceBUsesNumberedDefaultPetName() {
+        let suiteName = "MacPetTests.InstanceBDefault.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let model = AppModel(service: LocalPetInteractionService(), defaults: defaults, instanceID: "b")
+        XCTAssertEqual(model.petName, "团团2")
+    }
+
     func testLegacyPlaceholderPetNameMigratesToDefault() {
         let suiteName = "MacPetTests.DefaultPetNameMigration.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!

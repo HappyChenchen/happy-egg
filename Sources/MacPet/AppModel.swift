@@ -9,12 +9,13 @@ final class AppModel {
 
     private let service: any PetInteractionService
     private static let pairingAlphabet = Array("abcdefghjkmnpqrstuvwxyz23456789")
-    private static let defaultPetName = "团团"
+    private static let baseDefaultPetName = "团团"
     private static let legacyDefaultPetName = "我的宠物"
     private var listeningTask: Task<Void, Never>?
     private var peerRefreshTask: Task<Void, Never>?
     private var connectionTask: Task<Void, Never>?
     private let defaults: UserDefaults
+    private let fallbackPetName: String
 
     private(set) var bubbleText: String?
     private(set) var emotion: Emotion = .idle
@@ -49,17 +50,18 @@ final class AppModel {
         return pairedFriend
     }
 
-    init(service: any PetInteractionService, defaults: UserDefaults = .standard) {
+    init(service: any PetInteractionService, defaults: UserDefaults = .standard, instanceID: String? = nil) {
         self.service = service
         self.defaults = defaults
+        fallbackPetName = Self.defaultPetName(for: instanceID)
         let savedPeerID = defaults.string(forKey: "com.macpet.peer-id")?.lowercased()
         peerID = savedPeerID.flatMap(Self.validProfileID) ?? Self.makeProfileID()
         defaults.set(peerID, forKey: "com.macpet.peer-id")
         petScale = PetScale(rawValue: defaults.object(forKey: "com.macpet.pet-scale") as? CGFloat ?? 1) ?? .normal
         ownerName = defaults.string(forKey: "com.macpet.owner-name") ?? "我"
         let savedPetName = defaults.string(forKey: "com.macpet.pet-name")
-        petName = savedPetName == Self.legacyDefaultPetName ? Self.defaultPetName : (savedPetName ?? Self.defaultPetName)
-        if savedPetName == Self.legacyDefaultPetName { defaults.set(Self.defaultPetName, forKey: "com.macpet.pet-name") }
+        petName = savedPetName == Self.legacyDefaultPetName ? fallbackPetName : (savedPetName ?? fallbackPetName)
+        if savedPetName == Self.legacyDefaultPetName { defaults.set(fallbackPetName, forKey: "com.macpet.pet-name") }
         if let data = defaults.data(forKey: "com.macpet.friends"), let saved = try? JSONDecoder().decode([PetPeer].self, from: data) {
             friends = Self.deduplicatedFriends(saved).filter { !Self.isSelfFriend($0, peerID: peerID, petName: petName) }
             if friends != saved { persistFriends() }
@@ -230,7 +232,7 @@ final class AppModel {
     func setProfile(owner: String, pet: String) {
         let oldPetName = petName
         ownerName = Self.cleanName(owner, fallback: "我")
-        petName = Self.cleanName(pet, fallback: Self.defaultPetName)
+        petName = Self.cleanName(pet, fallback: fallbackPetName)
         defaults.set(ownerName, forKey: "com.macpet.owner-name")
         defaults.set(petName, forKey: "com.macpet.pet-name")
         guard oldPetName != petName, confirmedFriend != nil else { return }
@@ -292,6 +294,10 @@ final class AppModel {
 
     private static func isPendingFriendName(_ name: String) -> Bool {
         name == "配对码已创建" || name == "正在加入配对"
+    }
+
+    private static func defaultPetName(for instanceID: String?) -> String {
+        instanceID?.lowercased() == "b" ? "团团2" : baseDefaultPetName
     }
 
     private static func makePairingCode() -> String {

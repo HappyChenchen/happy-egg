@@ -2,8 +2,17 @@ import AppKit
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    private let model = AppModel(service: PublicPetInteractionService(), defaults: AppModel.launchDefaults())
     private let launchInstanceID = AppModel.launchInstanceID()
+    private let model: AppModel
+
+    override init() {
+        model = AppModel(
+            service: PublicPetInteractionService(),
+            defaults: AppModel.launchDefaults(),
+            instanceID: launchInstanceID
+        )
+        super.init()
+    }
     private var panelController: PetPanelController!
     private var statusItem: NSStatusItem!
     private var visibilityItem: NSMenuItem!
