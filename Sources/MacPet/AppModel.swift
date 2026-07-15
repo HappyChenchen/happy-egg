@@ -14,11 +14,13 @@ final class AppModel {
     private static let applicationIdentifier = "io.happypuppy.macpet"
     private static let legacyApplicationIdentifier = "com.macpet.prototype"
     private static let legacyMigrationKey = "io.happypuppy.macpet.did-migrate-prototype-defaults"
+    private static let selectedFriendKey = "com.macpet.selected-friend-id"
     private static let persistedKeys = [
         "com.macpet.peer-id",
         "com.macpet.pet-scale",
         "com.macpet.pet-name",
-        "com.macpet.friends"
+        "com.macpet.friends",
+        selectedFriendKey
     ]
     private var listeningTask: Task<Void, Never>?
     private var connectionTask: Task<Void, Never>?
@@ -85,6 +87,14 @@ final class AppModel {
         if let data = defaults.data(forKey: "com.macpet.friends"), let saved = try? JSONDecoder().decode([PetPeer].self, from: data) {
             friends = Self.deduplicatedFriends(saved).filter { !Self.isSelfFriend($0, peerID: peerID, petName: petName) }
             if friends != saved { persistFriends() }
+        }
+        if let selectedID = defaults.string(forKey: Self.selectedFriendKey) {
+            pairedFriend = friends.first { Self.selectionID(for: $0) == selectedID }
+            if pairedFriend == nil { defaults.removeObject(forKey: Self.selectedFriendKey) }
+        }
+        if pairedFriend == nil, friends.count == 1, let onlyFriend = friends.first {
+            pairedFriend = onlyFriend
+            defaults.set(Self.selectionID(for: onlyFriend), forKey: Self.selectedFriendKey)
         }
     }
 
@@ -168,7 +178,10 @@ final class AppModel {
             onlineFriendPeerIDs.remove(friendPeerID)
         }
         let removedCurrentFriend = pairedFriend.map { Self.matchesFriend($0, friend) } ?? false
-        if removedCurrentFriend { pairedFriend = nil }
+        if removedCurrentFriend {
+            pairedFriend = nil
+            defaults.removeObject(forKey: Self.selectedFriendKey)
+        }
         persistFriends()
         refreshPresenceSubscription()
         onSocialStateChange?()
@@ -178,6 +191,7 @@ final class AppModel {
 
     func selectFriend(_ friend: PetPeer) async {
         pairedFriend = friend
+        defaults.set(Self.selectionID(for: friend), forKey: Self.selectedFriendKey)
         if friend.peerID == nil {
             await service.pair(room: friend.id, name: petName, peerID: peerID)
         } else {
@@ -305,6 +319,9 @@ final class AppModel {
         }
         friends.append(friend)
         persistFriends()
+        if pairedFriend.map({ Self.matchesFriend($0, friend) }) == true {
+            defaults.set(Self.selectionID(for: friend), forKey: Self.selectedFriendKey)
+        }
         refreshPresenceSubscription()
     }
 
@@ -366,6 +383,10 @@ final class AppModel {
 
     private static func matchesFriend(_ lhs: PetPeer, _ rhs: PetPeer) -> Bool {
         lhs.id == rhs.id || (lhs.peerID != nil && lhs.peerID == rhs.peerID)
+    }
+
+    private static func selectionID(for friend: PetPeer) -> String {
+        friend.peerID?.lowercased() ?? friend.id
     }
 
     private static func isPendingFriendName(_ name: String) -> Bool {

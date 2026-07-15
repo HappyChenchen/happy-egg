@@ -99,6 +99,64 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(model.pairedFriend?.name, "Alice")
     }
 
+    func testSelectedFriendPersistsAcrossModelInstances() async throws {
+        let suiteName = "MacPetTests.SelectedFriend.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let friends = [
+            PetPeer(id: "room-a", name: "Alice", peerID: String(repeating: "a", count: 32)),
+            PetPeer(id: "room-b", name: "Bob", peerID: String(repeating: "b", count: 32))
+        ]
+        defaults.set(try JSONEncoder().encode(friends), forKey: "com.macpet.friends")
+        let model = AppModel(service: LocalPetInteractionService(), defaults: defaults)
+
+        await model.selectFriend(friends[1])
+        let restored = AppModel(service: LocalPetInteractionService(), defaults: defaults)
+
+        XCTAssertEqual(restored.pairedFriend, friends[1])
+    }
+
+    func testOnlySavedFriendIsSelectedAutomatically() throws {
+        let suiteName = "MacPetTests.SingleFriendSelection.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let friend = PetPeer(
+            id: "room-a",
+            name: "Alice",
+            peerID: String(repeating: "a", count: 32)
+        )
+        defaults.set(try JSONEncoder().encode([friend]), forKey: "com.macpet.friends")
+
+        let model = AppModel(service: LocalPetInteractionService(), defaults: defaults)
+
+        XCTAssertEqual(model.pairedFriend, friend)
+    }
+
+    func testNewlyPairedFriendBecomesPersistedSelection() async throws {
+        let suiteName = "MacPetTests.NewPairSelection.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let existingFriend = PetPeer(
+            id: "room-a",
+            name: "Alice",
+            peerID: String(repeating: "a", count: 32)
+        )
+        defaults.set(try JSONEncoder().encode([existingFriend]), forKey: "com.macpet.friends")
+        let service = LocalPetInteractionService(responseDelay: .zero)
+        let model = AppModel(service: service, defaults: defaults)
+        model.startListening()
+        await Task.yield()
+
+        await model.joinPublicPairing(code: "2048")
+        let newPeerID = String(repeating: "b", count: 32)
+        await service.simulatePeerAvailable(name: "Bob", peerID: newPeerID)
+        try await Task.sleep(for: .milliseconds(20))
+        let restored = AppModel(service: LocalPetInteractionService(), defaults: defaults)
+
+        XCTAssertEqual(restored.pairedFriend?.peerID, newPeerID)
+        XCTAssertEqual(restored.pairedFriend?.name, "Bob")
+    }
+
     func testCreatedPairingCodeIsShortAndRelayCompatible() async {
         let model = AppModel(service: LocalPetInteractionService())
         let code = await model.createPublicPairing()
@@ -138,7 +196,10 @@ final class AppModelTests: XCTestCase {
     }
 
     func testInteractionWithoutPairingStillShowsLocalEffect() async {
-        let model = AppModel(service: LocalPetInteractionService())
+        let suiteName = "MacPetTests.NoPairingInteraction.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let model = AppModel(service: LocalPetInteractionService(), defaults: defaults)
         await model.sendInteraction(kind: .poke, frameName: "ai_buddy_07")
         XCTAssertEqual(model.bubbleText, "本地互动成功，配对后可拍朋友")
         XCTAssertEqual(model.emotion, .happy)
@@ -331,6 +392,7 @@ final class AppModelTests: XCTestCase {
         XCTAssertTrue(model.friends.isEmpty)
         XCTAssertNil(model.pairedFriend)
         XCTAssertFalse(model.isFriendOnline(friend))
+        XCTAssertNil(defaults.string(forKey: "com.macpet.selected-friend-id"))
         let restored = AppModel(service: LocalPetInteractionService(), defaults: defaults)
         XCTAssertTrue(restored.friends.isEmpty)
     }
