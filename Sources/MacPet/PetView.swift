@@ -22,7 +22,7 @@ final class PetView: NSView {
     var friends: [PetPeer] = []
     var onlineFriendPeerIDs: Set<String> = []
     var onSelectFriend: ((PetPeer) -> Void)?
-    var onRemoveFriend: ((PetPeer) -> Void)?
+    var onRemoveFriend: (() -> Void)?
     var onEditProfile: (() -> Void)?
     var pairedFriend: PetPeer?
     var petName = "我的宠物"
@@ -120,6 +120,13 @@ final class PetView: NSView {
         addFriendMenu.addItem(joinItem)
         addFriendItem.submenu = addFriendMenu
         menu.addItem(addFriendItem)
+        if !friends.isEmpty {
+            let deleteItem = menu.addItem(withTitle: "删除好友…", action: #selector(removeFriend), keyEquivalent: "")
+            deleteItem.attributedTitle = NSAttributedString(
+                string: "删除好友…",
+                attributes: [.foregroundColor: NSColor.systemRed]
+            )
+        }
         menu.addItem(NSMenuItem.separator())
         if let pairedFriend = confirmedFriend {
             let currentFriendItem = NSMenuItem(title: "当前好友：\(pairedFriend.name)", action: nil, keyEquivalent: "")
@@ -130,11 +137,6 @@ final class PetView: NSView {
             menu.addItem(withTitle: "一起庆祝", action: #selector(celebrate), keyEquivalent: "")
             menu.addItem(NSMenuItem.separator())
             menu.addItem(withTitle: "断开连接", action: #selector(unpair), keyEquivalent: "")
-            let deleteItem = menu.addItem(withTitle: "删除好友…", action: #selector(removeCurrentFriend), keyEquivalent: "")
-            deleteItem.attributedTitle = NSAttributedString(
-                string: "删除好友…",
-                attributes: [.foregroundColor: NSColor.systemRed]
-            )
         } else {
             let hint = NSMenuItem(title: "选择好友或添加新好友", action: nil, keyEquivalent: "")
             hint.isEnabled = false
@@ -202,10 +204,7 @@ final class PetView: NSView {
     @objc private func hidePet() { onHide?() }
     @objc private func quitApp() { onQuit?() }
     @objc private func unpair() { onUnpair?() }
-    @objc private func removeCurrentFriend() {
-        guard let friend = confirmedFriend else { return }
-        onRemoveFriend?(friend)
-    }
+    @objc private func removeFriend() { onRemoveFriend?() }
 
     @objc private func pairPeer(_ sender: NSMenuItem) {
         guard let id = sender.representedObject as? String,

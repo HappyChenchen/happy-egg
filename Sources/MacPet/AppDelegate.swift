@@ -47,8 +47,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.promptForPairingCode()
         } onSelectFriend: { [weak self] friend in
             Task { await self?.model.selectFriend(friend) }
-        } onRemoveFriend: { [weak self] friend in
-            self?.confirmRemoveFriend(friend)
+        } onRemoveFriend: { [weak self] in
+            self?.promptToRemoveFriend()
         } onEditProfile: { [weak self] in
             self?.editProfile()
         }
@@ -145,14 +145,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Task { await model.joinPublicPairing(code: input.stringValue) }
     }
 
-    private func confirmRemoveFriend(_ friend: PetPeer) {
+    private func promptToRemoveFriend() {
+        guard !model.friends.isEmpty else { return }
         let alert = NSAlert()
         alert.alertStyle = .warning
-        alert.messageText = "删除好友“\(friend.name)”？"
+        alert.messageText = "删除好友"
         alert.informativeText = "删除后需要重新配对才能互动。"
+        let picker = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 320, height: 30), pullsDown: false)
+        for friend in model.friends {
+            let state = model.isFriendOnline(friend) ? "在线" : "离线"
+            picker.addItem(withTitle: "\(friend.name) · \(state)")
+            picker.lastItem?.representedObject = friend.id
+        }
+        alert.accessoryView = picker
         alert.addButton(withTitle: "删除")
         alert.addButton(withTitle: "取消")
         guard alert.runModal() == .alertFirstButtonReturn else { return }
+        guard let friendID = picker.selectedItem?.representedObject as? String,
+              let friend = model.friends.first(where: { $0.id == friendID }) else { return }
         model.removeFriend(friend)
     }
 

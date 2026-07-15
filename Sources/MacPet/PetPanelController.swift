@@ -17,7 +17,7 @@ final class PetPanelController {
         onCreatePublicPairing: @escaping () -> Void,
         onJoinPublicPairing: @escaping () -> Void,
         onSelectFriend: @escaping (PetPeer) -> Void,
-        onRemoveFriend: @escaping (PetPeer) -> Void,
+        onRemoveFriend: @escaping () -> Void,
         onEditProfile: @escaping () -> Void
     ) {
         petView = PetView(frame: NSRect(x: 0, y: 0, width: 220, height: 250))
