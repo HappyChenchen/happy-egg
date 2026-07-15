@@ -111,3 +111,38 @@ test('propagates stable profile IDs with presence and profile updates', async (c
   alice.send(JSON.stringify({ type: 'profile', name: 'Alicia', peerID: aliceID }));
   assert.deepEqual(await renamed, { type: 'profile', peerName: 'Alicia', peerID: aliceID });
 });
+
+test('reports online snapshots and realtime friend presence changes', async (context) => {
+  const relay = createRelayServer();
+  const address = await relay.listen(0, '127.0.0.1');
+  context.after(async () => relay.close());
+  const url = `ws://127.0.0.1:${address.port}/ws`;
+  const [alice, bob] = await Promise.all([connect(url), connect(url)]);
+  context.after(() => [alice, bob].forEach((socket) => socket.close()));
+  const aliceID = 'a'.repeat(32);
+  const bobID = 'b'.repeat(32);
+
+  alice.send(JSON.stringify({ type: 'presence-register', peerID: aliceID, name: 'Alice', friendPeerIDs: [bobID] }));
+  assert.deepEqual(await nextMessage(alice), { type: 'presence-snapshot', onlinePeerIDs: [] });
+
+  const bobOnline = nextMessage(alice);
+  bob.send(JSON.stringify({ type: 'presence-register', peerID: bobID, name: 'Bob', friendPeerIDs: [aliceID] }));
+  assert.deepEqual(await nextMessage(bob), { type: 'presence-snapshot', onlinePeerIDs: [aliceID] });
+  assert.deepEqual(await bobOnline, { type: 'friend-presence', peerID: bobID, online: true });
+
+  const bobOffline = nextMessage(alice);
+  bob.close();
+  assert.deepEqual(await bobOffline, { type: 'friend-presence', peerID: bobID, online: false });
+});
+
+test('rejects invalid presence subscriptions', async (context) => {
+  const relay = createRelayServer();
+  const address = await relay.listen(0, '127.0.0.1');
+  context.after(async () => relay.close());
+  const url = `ws://127.0.0.1:${address.port}/ws`;
+  const alice = await connect(url);
+  context.after(() => alice.close());
+
+  alice.send(JSON.stringify({ type: 'presence-register', peerID: 'not-a-profile', name: 'Alice', friendPeerIDs: [] }));
+  assert.deepEqual(await nextMessage(alice), { type: 'error', message: 'invalid presence' });
+});

@@ -33,6 +33,8 @@ export function createRelayServer({ pairingTTL = 10 * 60_000 } = {}) {
   const rooms = new Map();
   const metadata = new WeakMap();
   const roomExpiryTimers = new Map();
+  const onlineProfiles = new Map();
+  const presenceWatchers = new Map();
   const server = http.createServer((request, response) => {
     if (request.url === '/health') {
       response.writeHead(200, { 'content-type': 'application/json' });
@@ -61,9 +63,35 @@ export function createRelayServer({ pairingTTL = 10 * 60_000 } = {}) {
     }
   }
 
+  function removeWatcherSubscriptions(socket, watchedPeerIDs) {
+    for (const peerID of watchedPeerIDs ?? []) {
+      const watchers = presenceWatchers.get(peerID);
+      watchers?.delete(socket);
+      if (watchers?.size === 0) presenceWatchers.delete(peerID);
+    }
+  }
+
+  function notifyPresence(peerID, online) {
+    for (const watcher of presenceWatchers.get(peerID) ?? []) {
+      send(watcher, { type: 'friend-presence', peerID, online });
+    }
+  }
+
+  function leavePresence(socket, meta) {
+    removeWatcherSubscriptions(socket, meta.watchedPeerIDs);
+    const sessions = onlineProfiles.get(meta.peerID);
+    sessions?.delete(socket);
+    if (sessions?.size === 0) {
+      onlineProfiles.delete(meta.peerID);
+      notifyPresence(meta.peerID, false);
+    }
+    metadata.delete(socket);
+  }
+
   function leave(socket) {
     const meta = metadata.get(socket);
     if (!meta) return;
+    if (meta.mode === 'presence') return leavePresence(socket, meta);
     const room = rooms.get(meta.room);
     room?.delete(socket);
     if (room?.size === 0) {
@@ -72,6 +100,44 @@ export function createRelayServer({ pairingTTL = 10 * 60_000 } = {}) {
     }
     metadata.delete(socket);
     for (const peer of room ?? []) send(peer, { type: 'presence', connected: room.size });
+  }
+
+  function validFriendPeerIDs(friendPeerIDs) {
+    return Array.isArray(friendPeerIDs)
+      && friendPeerIDs.length <= 100
+      && friendPeerIDs.every((peerID) => typeof peerID === 'string' && PROFILE_ID_PATTERN.test(peerID));
+  }
+
+  function registerPresence(socket, message) {
+    if (!validPeerID(message.peerID) || !message.peerID || !validName(message.name) || !validFriendPeerIDs(message.friendPeerIDs)) {
+      return reject(socket, 'invalid presence');
+    }
+    const peerID = message.peerID.toLowerCase();
+    const watchedPeerIDs = new Set(message.friendPeerIDs.map((friendID) => friendID.toLowerCase()).filter((friendID) => friendID !== peerID));
+    const existing = metadata.get(socket);
+
+    if (existing?.mode === 'presence' && existing.peerID === peerID) {
+      if (rateLimited(existing)) return reject(socket, 'rate limit');
+      removeWatcherSubscriptions(socket, existing.watchedPeerIDs);
+      existing.name = message.name.trim();
+      existing.watchedPeerIDs = watchedPeerIDs;
+    } else {
+      leave(socket);
+      const sessions = onlineProfiles.get(peerID) ?? new Set();
+      const wasOnline = sessions.size > 0;
+      sessions.add(socket);
+      onlineProfiles.set(peerID, sessions);
+      metadata.set(socket, { mode: 'presence', peerID, name: message.name.trim(), watchedPeerIDs, sentAt: [] });
+      if (!wasOnline) notifyPresence(peerID, true);
+    }
+
+    for (const friendID of watchedPeerIDs) {
+      const watchers = presenceWatchers.get(friendID) ?? new Set();
+      watchers.add(socket);
+      presenceWatchers.set(friendID, watchers);
+    }
+    const onlinePeerIDs = [...watchedPeerIDs].filter((friendID) => onlineProfiles.has(friendID));
+    send(socket, { type: 'presence-snapshot', onlinePeerIDs });
   }
 
   function reject(socket, message) {
@@ -84,6 +150,11 @@ export function createRelayServer({ pairingTTL = 10 * 60_000 } = {}) {
       let message;
       try { message = JSON.parse(raw.toString()); } catch { return reject(socket, 'invalid JSON'); }
 
+      if (message.type === 'presence-register') {
+        registerPresence(socket, message);
+        return;
+      }
+
       if (message.type === 'join') {
         if (!ROOM_PATTERN.test(message.room) || !validName(message.name) || !validPeerID(message.peerID)) return reject(socket, 'invalid join');
         const roomID = message.room.toLowerCase();
@@ -93,7 +164,7 @@ export function createRelayServer({ pairingTTL = 10 * 60_000 } = {}) {
         room.add(socket);
         rooms.set(roomID, room);
         const peerID = typeof message.peerID === 'string' ? message.peerID.toLowerCase() : null;
-        metadata.set(socket, { room: roomID, name: message.name.trim(), peerID, sentAt: [] });
+        metadata.set(socket, { mode: 'room', room: roomID, name: message.name.trim(), peerID, sentAt: [] });
         if (room.size === 1 && pairingTTL > 0) {
           roomExpiryTimers.set(roomID, setTimeout(() => expireRoom(roomID), pairingTTL));
         } else if (room.size >= 2) {
@@ -113,6 +184,7 @@ export function createRelayServer({ pairingTTL = 10 * 60_000 } = {}) {
 
       const meta = metadata.get(socket);
       if (!meta) return reject(socket, 'join required');
+      if (meta.mode !== 'room') return reject(socket, 'invalid presence message');
 
       if (message.type === 'profile') {
         if (!validName(message.name)) return reject(socket, 'invalid profile');
@@ -153,7 +225,7 @@ export function createRelayServer({ pairingTTL = 10 * 60_000 } = {}) {
     async close() {
       for (const timer of roomExpiryTimers.values()) clearTimeout(timer);
       roomExpiryTimers.clear();
-      for (const room of rooms.values()) for (const socket of room) socket.terminate();
+      for (const socket of wss.clients) socket.terminate();
       await new Promise((resolve) => server.close(resolve));
     }
   };

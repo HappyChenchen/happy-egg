@@ -172,6 +172,47 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(model.bubbleText, "朋友已离线，等待重连")
     }
 
+    func testPresenceSubscriptionContainsOnlySavedStableFriendIDs() async throws {
+        let suiteName = "MacPetTests.PresenceSubscription.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let stableID = String(repeating: "a", count: 32)
+        let savedFriends = [
+            PetPeer(id: "room-a", name: "Alice", peerID: stableID),
+            PetPeer(id: "legacy-room", name: "旧好友")
+        ]
+        defaults.set(try JSONEncoder().encode(savedFriends), forKey: "com.macpet.friends")
+        let service = LocalPetInteractionService(responseDelay: .zero)
+        let model = AppModel(service: service, defaults: defaults)
+
+        model.startListening()
+        try await Task.sleep(for: .milliseconds(20))
+
+        let subscriptions = await service.presenceSubscriptionValues()
+        XCTAssertEqual(subscriptions.last, [stableID])
+    }
+
+    func testFriendPresenceSnapshotAndUpdatesChangeOnlineState() async throws {
+        let suiteName = "MacPetTests.PresenceState.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let stableID = String(repeating: "b", count: 32)
+        let friend = PetPeer(id: "room-b", name: "Bob", peerID: stableID)
+        defaults.set(try JSONEncoder().encode([friend]), forKey: "com.macpet.friends")
+        let service = LocalPetInteractionService(responseDelay: .zero)
+        let model = AppModel(service: service, defaults: defaults)
+        model.startListening()
+        await Task.yield()
+
+        await service.simulatePresenceSnapshot(onlinePeerIDs: [stableID])
+        try await Task.sleep(for: .milliseconds(20))
+        XCTAssertTrue(model.isFriendOnline(friend))
+
+        await service.simulateFriendPresence(peerID: stableID, isOnline: false)
+        try await Task.sleep(for: .milliseconds(20))
+        XCTAssertFalse(model.isFriendOnline(friend))
+    }
+
     func testSameNamedFriendKeepsOnlyNewestPairing() async throws {
         let suiteName = "MacPetTests.Friends.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!

@@ -6,6 +6,8 @@ enum PetConnectionUpdate: Equatable, Sendable {
     case peerUnavailable
     case connectionLost
     case connectionFailed(message: String)
+    case presenceSnapshot(onlinePeerIDs: Set<String>)
+    case friendPresence(peerID: String, isOnline: Bool)
 }
 
 protocol PetInteractionService: Sendable {
@@ -13,6 +15,7 @@ protocol PetInteractionService: Sendable {
     func pair(room: String, name: String, peerID: String) async
     func stop() async
     func updateName(_ name: String) async
+    func updatePresence(peerID: String, name: String, friendPeerIDs: Set<String>) async
     func send(_ event: PetEvent, to peerID: String) async
     func incomingEvents() async -> AsyncStream<PetEvent>
     func connectionUpdates() async -> AsyncStream<PetConnectionUpdate>
@@ -27,6 +30,7 @@ actor LocalPetInteractionService: PetInteractionService {
     private let responseDelay: Duration
     private var peers: [PetPeer] = []
     private var updatedNames: [String] = []
+    private var presenceSubscriptions: [Set<String>] = []
 
     init(responseDelay: Duration = .milliseconds(850)) {
         var savedContinuation: AsyncStream<PetEvent>.Continuation!
@@ -50,8 +54,12 @@ actor LocalPetInteractionService: PetInteractionService {
     func pair(room: String, name: String, peerID: String) async {}
     func stop() async {}
     func updateName(_ name: String) async { updatedNames.append(name) }
+    func updatePresence(peerID: String, name: String, friendPeerIDs: Set<String>) async {
+        presenceSubscriptions.append(friendPeerIDs)
+    }
 
     func updatedNameValues() -> [String] { updatedNames }
+    func presenceSubscriptionValues() -> [Set<String>] { presenceSubscriptions }
 
     func setPeers(_ peers: [PetPeer]) {
         self.peers = peers
@@ -78,6 +86,14 @@ actor LocalPetInteractionService: PetInteractionService {
     func simulatePeerUnavailable() {
         connectionContinuation.yield(.peerUnavailable)
     }
+
+    func simulatePresenceSnapshot(onlinePeerIDs: Set<String>) {
+        connectionContinuation.yield(.presenceSnapshot(onlinePeerIDs: onlinePeerIDs))
+    }
+
+    func simulateFriendPresence(peerID: String, isOnline: Bool) {
+        connectionContinuation.yield(.friendPresence(peerID: peerID, isOnline: isOnline))
+    }
 }
 
 /// Public, server-mediated transport for friends who are not on the same Wi-Fi.
@@ -93,6 +109,12 @@ final class PublicPetInteractionService: @unchecked Sendable, PetInteractionServ
     private var pairingPeerID: String?
     private var reconnectTask: Task<Void, Never>?
     private var reconnectEnabled = false
+    private var presenceTask: URLSessionWebSocketTask?
+    private var presencePeerID: String?
+    private var presenceName: String?
+    private var presenceFriendPeerIDs: Set<String> = []
+    private var presenceReconnectTask: Task<Void, Never>?
+    private var presenceReconnectEnabled = false
 
     init() {
         var savedContinuation: AsyncStream<PetEvent>.Continuation!
@@ -105,7 +127,9 @@ final class PublicPetInteractionService: @unchecked Sendable, PetInteractionServ
 
     deinit {
         reconnectTask?.cancel()
+        presenceReconnectTask?.cancel()
         task?.cancel(with: .goingAway, reason: nil)
+        presenceTask?.cancel(with: .goingAway, reason: nil)
         continuation.finish()
         connectionContinuation.finish()
     }
@@ -146,6 +170,22 @@ final class PublicPetInteractionService: @unchecked Sendable, PetInteractionServ
         var payload = ["type": "profile", "name": name]
         if let pairingPeerID { payload["peerID"] = pairingPeerID }
         await sendJSON(payload, through: task)
+        presenceName = name
+        await sendPresenceRegistration()
+    }
+
+    func updatePresence(peerID: String, name: String, friendPeerIDs: Set<String>) async {
+        presencePeerID = peerID
+        presenceName = name
+        presenceFriendPeerIDs = friendPeerIDs
+        presenceReconnectEnabled = true
+        if presenceTask == nil {
+            presenceReconnectTask?.cancel()
+            presenceReconnectTask = nil
+            await connectPresence()
+        } else {
+            await sendPresenceRegistration()
+        }
     }
 
     private func connect(room: String, name: String, peerID: String) async {
@@ -157,7 +197,27 @@ final class PublicPetInteractionService: @unchecked Sendable, PetInteractionServ
         receive(on: socket)
     }
 
-    private func sendJSON(_ object: [String: String], through task: URLSessionWebSocketTask?) async {
+    private func connectPresence() async {
+        guard presenceReconnectEnabled, presencePeerID != nil, presenceName != nil else { return }
+        let socket = URLSession.shared.webSocketTask(with: endpoint)
+        presenceTask = socket
+        socket.resume()
+        await sendPresenceRegistration()
+        receivePresence(on: socket)
+    }
+
+    private func sendPresenceRegistration() async {
+        guard let presencePeerID, let presenceName else { return }
+        let payload: [String: Any] = [
+            "type": "presence-register",
+            "peerID": presencePeerID,
+            "name": presenceName,
+            "friendPeerIDs": presenceFriendPeerIDs.sorted()
+        ]
+        await sendJSON(payload, through: presenceTask)
+    }
+
+    private func sendJSON(_ object: [String: Any], through task: URLSessionWebSocketTask?) async {
         guard let task, let data = try? JSONSerialization.data(withJSONObject: object), let text = String(data: data, encoding: .utf8) else { return }
         try? await task.send(.string(text))
     }
@@ -172,6 +232,19 @@ final class PublicPetInteractionService: @unchecked Sendable, PetInteractionServ
                 self.receive(on: task)
             case .success, .failure:
                 self.handleConnectionLoss(for: task)
+            }
+        }
+    }
+
+    private func receivePresence(on task: URLSessionWebSocketTask) {
+        task.receive { [weak self] result in
+            guard let self, self.presenceTask === task else { return }
+            switch result {
+            case let .success(.string(text)):
+                self.handlePresenceMessage(text)
+                self.receivePresence(on: task)
+            case .success, .failure:
+                self.handlePresenceConnectionLoss(for: task)
             }
         }
     }
@@ -203,6 +276,19 @@ final class PublicPetInteractionService: @unchecked Sendable, PetInteractionServ
         }
     }
 
+    private func handlePresenceMessage(_ text: String) {
+        guard let data = text.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let type = json["type"] as? String else { return }
+        if type == "presence-snapshot", let peerIDs = json["onlinePeerIDs"] as? [String] {
+            connectionContinuation.yield(.presenceSnapshot(onlinePeerIDs: Set(peerIDs.map { $0.lowercased() })))
+        } else if type == "friend-presence",
+                  let peerID = json["peerID"] as? String,
+                  let isOnline = json["online"] as? Bool {
+            connectionContinuation.yield(.friendPresence(peerID: peerID.lowercased(), isOnline: isOnline))
+        }
+    }
+
     private func handleConnectionLoss(for task: URLSessionWebSocketTask) {
         guard self.task === task, reconnectEnabled, pairingRoom != nil else { return }
         connectionContinuation.yield(.connectionLost)
@@ -212,6 +298,19 @@ final class PublicPetInteractionService: @unchecked Sendable, PetInteractionServ
             guard !Task.isCancelled, let self, self.reconnectEnabled else { return }
             self.reconnectTask = nil
             await self.connect(room: room, name: name, peerID: peerID)
+        }
+    }
+
+    private func handlePresenceConnectionLoss(for task: URLSessionWebSocketTask) {
+        guard presenceTask === task else { return }
+        presenceTask = nil
+        connectionContinuation.yield(.presenceSnapshot(onlinePeerIDs: []))
+        guard presenceReconnectEnabled, presenceReconnectTask == nil else { return }
+        presenceReconnectTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(2))
+            guard !Task.isCancelled, let self, self.presenceReconnectEnabled else { return }
+            self.presenceReconnectTask = nil
+            await self.connectPresence()
         }
     }
 }

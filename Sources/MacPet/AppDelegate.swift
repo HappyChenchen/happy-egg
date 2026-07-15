@@ -101,6 +101,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             petName: model.petName,
             peers: model.nearbyPeers,
             friends: model.friends,
+            onlineFriendPeerIDs: model.onlineFriendPeerIDs,
             pairedFriend: model.pairedFriend
         )
     }
@@ -146,7 +147,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func updateMenuState() {
         if let friend = model.confirmedFriend {
-            pairingStatusItem?.title = "已配对 · \(friend.name)"
+            pairingStatusItem?.title = "\(friend.name) · \(model.isFriendOnline(friend) ? "在线" : "离线")"
             interactionItem?.title = "拍一拍 \(friend.name)"
             interactionItem?.isEnabled = true
         } else if let code = model.activePairingCode {

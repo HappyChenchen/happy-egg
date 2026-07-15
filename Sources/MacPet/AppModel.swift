@@ -23,6 +23,7 @@ final class AppModel {
     private(set) var nearbyPeers: [PetPeer] = []
     private(set) var pairedFriend: PetPeer?
     private(set) var friends: [PetPeer] = []
+    private(set) var onlineFriendPeerIDs: Set<String> = []
     private(set) var peerID: String
     private(set) var ownerName: String
     private(set) var petName: String
@@ -103,6 +104,7 @@ final class AppModel {
                     }
                     self.pairedFriend = PetPeer(id: friend.id, name: name, peerID: remotePeerID ?? friend.peerID)
                     self.saveFriend(self.pairedFriend!)
+                    _ = self.updateFriendPresence(peerID: self.pairedFriend?.peerID, isOnline: true)
                     self.onPeersChange?()
                     self.setState(text: "已配对 \(name)", emotion: .happy, frameName: self.activeFrameName)
                 case let .peerRenamed(name, remotePeerID):
@@ -114,20 +116,35 @@ final class AppModel {
                     let oldName = friend.name
                     self.pairedFriend = PetPeer(id: friend.id, name: name, peerID: remotePeerID ?? friend.peerID)
                     self.saveFriend(self.pairedFriend!)
+                    _ = self.updateFriendPresence(peerID: self.pairedFriend?.peerID, isOnline: true)
                     self.onPeersChange?()
                     let message = oldName == name || Self.isPendingFriendName(oldName) ? "已配对 \(name)" : "\(oldName) 改名为 \(name)"
                     self.setState(text: message, emotion: .happy, frameName: self.activeFrameName)
                 case .peerUnavailable:
                     guard self.pairedFriend != nil else { continue }
+                    if self.updateFriendPresence(peerID: self.pairedFriend?.peerID, isOnline: false) { self.onPeersChange?() }
                     self.setState(text: "朋友已离线，等待重连", emotion: .idle, frameName: self.activeFrameName)
                 case .connectionLost:
                     guard self.pairedFriend != nil else { continue }
+                    if self.updateFriendPresence(peerID: self.pairedFriend?.peerID, isOnline: false) { self.onPeersChange?() }
                     self.setState(text: "连接已断开，正在重连", emotion: .idle, frameName: self.activeFrameName)
                 case let .connectionFailed(message):
                     self.setState(text: message, emotion: .idle, frameName: self.activeFrameName)
+                case let .presenceSnapshot(onlinePeerIDs):
+                    let knownPeerIDs = Set(self.friends.compactMap { $0.peerID?.lowercased() })
+                    let nextOnlinePeerIDs = onlinePeerIDs.intersection(knownPeerIDs)
+                    guard nextOnlinePeerIDs != self.onlineFriendPeerIDs else { continue }
+                    self.onlineFriendPeerIDs = nextOnlinePeerIDs
+                    self.onPeersChange?()
+                case let .friendPresence(remotePeerID, isOnline):
+                    let normalizedPeerID = remotePeerID.lowercased()
+                    let knownPeerIDs = Set(self.friends.compactMap { $0.peerID?.lowercased() })
+                    guard knownPeerIDs.contains(normalizedPeerID) else { continue }
+                    if self.updateFriendPresence(peerID: normalizedPeerID, isOnline: isOnline) { self.onPeersChange?() }
                 }
             }
         }
+        refreshPresenceSubscription()
     }
 
     func startRefreshingPeers() {
@@ -162,6 +179,11 @@ final class AppModel {
         await service.pair(room: friend.id, name: petName, peerID: peerID)
         onPeersChange?()
         setState(text: "正在连接 \(friend.name)", emotion: .happy, frameName: activeFrameName)
+    }
+
+    func isFriendOnline(_ friend: PetPeer) -> Bool {
+        guard let friendPeerID = friend.peerID?.lowercased() else { return false }
+        return onlineFriendPeerIDs.contains(friendPeerID)
     }
 
     func createPublicPairing() async -> String {
@@ -240,7 +262,9 @@ final class AppModel {
         petName = Self.cleanName(pet, fallback: fallbackPetName)
         defaults.set(ownerName, forKey: "com.macpet.owner-name")
         defaults.set(petName, forKey: "com.macpet.pet-name")
-        guard oldPetName != petName, confirmedFriend != nil else { return }
+        guard oldPetName != petName else { return }
+        refreshPresenceSubscription()
+        guard confirmedFriend != nil else { return }
         let service = service
         let newName = petName
         Task {
@@ -258,10 +282,30 @@ final class AppModel {
         }
         friends.append(friend)
         persistFriends()
+        refreshPresenceSubscription()
     }
 
     private func persistFriends() {
         if let data = try? JSONEncoder().encode(friends) { defaults.set(data, forKey: "com.macpet.friends") }
+    }
+
+    private func refreshPresenceSubscription() {
+        let friendPeerIDs = Set(friends.compactMap { $0.peerID?.lowercased() })
+        onlineFriendPeerIDs.formIntersection(friendPeerIDs)
+        let service = service
+        let localPeerID = peerID
+        let localPetName = petName
+        Task {
+            await service.updatePresence(peerID: localPeerID, name: localPetName, friendPeerIDs: friendPeerIDs)
+        }
+    }
+
+    private func updateFriendPresence(peerID: String?, isOnline: Bool) -> Bool {
+        guard let peerID = peerID?.lowercased() else { return false }
+        if isOnline {
+            return onlineFriendPeerIDs.insert(peerID).inserted
+        }
+        return onlineFriendPeerIDs.remove(peerID) != nil
     }
 
     private func isSelfFriend(_ friend: PetPeer) -> Bool {

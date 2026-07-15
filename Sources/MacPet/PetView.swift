@@ -20,6 +20,7 @@ final class PetView: NSView {
     var onJoinPublicPairing: (() -> Void)?
     var nearbyPeers: [PetPeer] = []
     var friends: [PetPeer] = []
+    var onlineFriendPeerIDs: Set<String> = []
     var onSelectFriend: ((PetPeer) -> Void)?
     var onEditProfile: (() -> Void)?
     var pairedFriend: PetPeer?
@@ -56,7 +57,12 @@ final class PetView: NSView {
         let menu = NSMenu()
         let profileItem = NSMenuItem(title: "我的宠物：\(petName)", action: #selector(editProfile), keyEquivalent: "")
         menu.addItem(profileItem)
-        let friendsItem = NSMenuItem(title: "好友列表（\(friends.count)）", action: nil, keyEquivalent: "")
+        let onlineCount = friends.filter { friend in
+            guard let peerID = friend.peerID?.lowercased() else { return false }
+            return onlineFriendPeerIDs.contains(peerID)
+        }.count
+        let friendsTitle = friends.isEmpty ? "好友（0）" : "好友（\(onlineCount)/\(friends.count) 在线）"
+        let friendsItem = NSMenuItem(title: friendsTitle, action: nil, keyEquivalent: "")
         let friendsMenu = NSMenu()
         if friends.isEmpty {
             let empty = NSMenuItem(title: "还没有长期好友", action: nil, keyEquivalent: "")
@@ -64,7 +70,13 @@ final class PetView: NSView {
             friendsMenu.addItem(empty)
         } else {
             for friend in friends {
-                let item = NSMenuItem(title: "\(friend.name) · 好友", action: #selector(selectFriend(_:)), keyEquivalent: "")
+                let status: String
+                if let peerID = friend.peerID?.lowercased() {
+                    status = onlineFriendPeerIDs.contains(peerID) ? "🟢 \(friend.name) · 在线" : "⚪️ \(friend.name) · 离线"
+                } else {
+                    status = "◌ \(friend.name) · 状态未知"
+                }
+                let item = NSMenuItem(title: status, action: #selector(selectFriend(_:)), keyEquivalent: "")
                 item.representedObject = friend.id
                 item.target = self
                 friendsMenu.addItem(item)
