@@ -54,6 +54,12 @@ make deploy-config
 docker build --tag macpet-relay:local relay
 ```
 
+需要验证真实公网 WebSocket 链路时，可显式运行不会进入默认 CI 的集成测试：
+
+```sh
+MACPET_INTEGRATION_TESTS=1 swift test --filter PublicRelayIntegrationTests
+```
+
 ## Pull Request
 
 Pull Request 应包含：

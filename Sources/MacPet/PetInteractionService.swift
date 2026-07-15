@@ -15,7 +15,7 @@ protocol PetInteractionService: Sendable {
     func stop() async
     func updateName(_ name: String) async
     func updatePresence(peerID: String, name: String, friendPeerIDs: Set<String>) async
-    func send(_ event: PetEvent, to peerID: String) async
+    func send(_ event: PetEvent, to peerID: String) async -> Bool
     func incomingEvents() async -> AsyncStream<PetEvent>
     func connectionUpdates() async -> AsyncStream<PetConnectionUpdate>
 }
@@ -27,12 +27,13 @@ actor LocalPetInteractionService: PetInteractionService {
     private let connectionStream: AsyncStream<PetConnectionUpdate>
     private let connectionContinuation: AsyncStream<PetConnectionUpdate>.Continuation
     private let responseDelay: Duration
+    private let sendSucceeds: Bool
     private var updatedNames: [String] = []
     private var presenceSubscriptions: [Set<String>] = []
     private var sentTargets: [String] = []
     private var pairedRooms: [String] = []
 
-    init(responseDelay: Duration = .milliseconds(850)) {
+    init(responseDelay: Duration = .milliseconds(850), sendSucceeds: Bool = true) {
         var savedContinuation: AsyncStream<PetEvent>.Continuation!
         stream = AsyncStream { savedContinuation = $0 }
         continuation = savedContinuation
@@ -40,6 +41,7 @@ actor LocalPetInteractionService: PetInteractionService {
         connectionStream = AsyncStream { savedConnection = $0 }
         connectionContinuation = savedConnection
         self.responseDelay = responseDelay
+        self.sendSucceeds = sendSucceeds
     }
 
     func incomingEvents() async -> AsyncStream<PetEvent> {
@@ -59,10 +61,12 @@ actor LocalPetInteractionService: PetInteractionService {
     func sentTargetValues() -> [String] { sentTargets }
     func pairedRoomValues() -> [String] { pairedRooms }
 
-    func send(_ event: PetEvent, to peerID: String) async {
+    func send(_ event: PetEvent, to peerID: String) async -> Bool {
         sentTargets.append(peerID)
+        guard sendSucceeds else { return false }
         try? await Task.sleep(for: responseDelay)
         continuation.yield(PetEvent(kind: event.kind, senderName: "朋友", frameName: event.frameName))
+        return true
     }
 
     func simulateIncomingPoke(from name: String) {
@@ -91,7 +95,8 @@ actor LocalPetInteractionService: PetInteractionService {
 }
 
 /// Public, server-mediated transport for friends who are not on the same Wi-Fi.
-final class PublicPetInteractionService: @unchecked Sendable, PetInteractionService {
+@MainActor
+final class PublicPetInteractionService: PetInteractionService {
     private let endpoint = URL(string: "wss://happypuppy.io/ws")!
     private let stream: AsyncStream<PetEvent>
     private let continuation: AsyncStream<PetEvent>.Continuation
@@ -102,13 +107,17 @@ final class PublicPetInteractionService: @unchecked Sendable, PetInteractionServ
     private var pairingName: String?
     private var pairingPeerID: String?
     private var reconnectTask: Task<Void, Never>?
+    private var heartbeatTask: Task<Void, Never>?
     private var reconnectEnabled = false
     private var presenceTask: URLSessionWebSocketTask?
     private var presencePeerID: String?
     private var presenceName: String?
     private var presenceFriendPeerIDs: Set<String> = []
     private var presenceReconnectTask: Task<Void, Never>?
+    private var presenceHeartbeatTask: Task<Void, Never>?
     private var presenceReconnectEnabled = false
+    private var pendingDeliveries: [String: CheckedContinuation<Bool, Never>] = [:]
+    private var deliveryTimeoutTasks: [String: Task<Void, Never>] = [:]
 
     init() {
         var savedContinuation: AsyncStream<PetEvent>.Continuation!
@@ -121,7 +130,11 @@ final class PublicPetInteractionService: @unchecked Sendable, PetInteractionServ
 
     deinit {
         reconnectTask?.cancel()
+        heartbeatTask?.cancel()
         presenceReconnectTask?.cancel()
+        presenceHeartbeatTask?.cancel()
+        deliveryTimeoutTasks.values.forEach { $0.cancel() }
+        pendingDeliveries.values.forEach { $0.resume(returning: false) }
         task?.cancel(with: .goingAway, reason: nil)
         presenceTask?.cancel(with: .goingAway, reason: nil)
         continuation.finish()
@@ -134,6 +147,8 @@ final class PublicPetInteractionService: @unchecked Sendable, PetInteractionServ
     func pair(room: String, name: String, peerID: String) async {
         reconnectTask?.cancel()
         reconnectTask = nil
+        heartbeatTask?.cancel()
+        heartbeatTask = nil
         pairingRoom = room
         pairingName = name
         pairingPeerID = peerID
@@ -146,6 +161,8 @@ final class PublicPetInteractionService: @unchecked Sendable, PetInteractionServ
         reconnectEnabled = false
         reconnectTask?.cancel()
         reconnectTask = nil
+        heartbeatTask?.cancel()
+        heartbeatTask = nil
         pairingRoom = nil
         pairingName = nil
         pairingPeerID = nil
@@ -153,26 +170,49 @@ final class PublicPetInteractionService: @unchecked Sendable, PetInteractionServ
         task = nil
     }
 
-    func send(_ event: PetEvent, to peerID: String) async {
+    func send(_ event: PetEvent, to peerID: String) async -> Bool {
         if peerID.range(of: "^[a-fA-F0-9]{32}$", options: .regularExpression) != nil {
-            await sendJSON([
-                "type": "friend-event",
-                "targetPeerID": peerID.lowercased(),
-                "kind": event.kind.rawValue,
-                "frameName": event.frameName
-            ], through: presenceTask)
-        } else {
-            await sendJSON(["type": "event", "kind": event.kind.rawValue, "frameName": event.frameName], through: task)
+            guard let socket = presenceTask else { return false }
+            let eventID = UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
+            return await withCheckedContinuation { delivery in
+                pendingDeliveries[eventID] = delivery
+                deliveryTimeoutTasks[eventID] = Task { @MainActor [weak self] in
+                    try? await Task.sleep(for: .seconds(4))
+                    guard !Task.isCancelled, let self else { return }
+                    self.resolveDelivery(eventID: eventID, delivered: false)
+                    self.handlePresenceConnectionLoss(for: socket)
+                }
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    let sent = await self.sendJSON([
+                        "type": "friend-event",
+                        "eventID": eventID,
+                        "targetPeerID": peerID.lowercased(),
+                        "kind": event.kind.rawValue,
+                        "frameName": event.frameName
+                    ], through: socket)
+                    if !sent {
+                        self.resolveDelivery(eventID: eventID, delivered: false)
+                        self.handlePresenceConnectionLoss(for: socket)
+                    }
+                }
+            }
         }
+        guard let socket = task else { return false }
+        let sent = await sendJSON(["type": "event", "kind": event.kind.rawValue, "frameName": event.frameName], through: socket)
+        if !sent { handleConnectionLoss(for: socket) }
+        return sent
     }
 
     func updateName(_ name: String) async {
         pairingName = name
         var payload = ["type": "profile", "name": name]
         if let pairingPeerID { payload["peerID"] = pairingPeerID }
-        await sendJSON(payload, through: task)
+        if let socket = task, !(await sendJSON(payload, through: socket)) {
+            handleConnectionLoss(for: socket)
+        }
         presenceName = name
-        await sendPresenceRegistration()
+        _ = await sendPresenceRegistration()
     }
 
     func updatePresence(peerID: String, name: String, friendPeerIDs: Set<String>) async {
@@ -185,7 +225,7 @@ final class PublicPetInteractionService: @unchecked Sendable, PetInteractionServ
             presenceReconnectTask = nil
             await connectPresence()
         } else {
-            await sendPresenceRegistration()
+            _ = await sendPresenceRegistration()
         }
     }
 
@@ -193,9 +233,10 @@ final class PublicPetInteractionService: @unchecked Sendable, PetInteractionServ
         let socket = URLSession.shared.webSocketTask(with: endpoint)
         task = socket
         socket.resume()
-        let payload = ["type": "join", "room": room, "name": name, "peerID": peerID]
-        await sendJSON(payload, through: socket)
         receive(on: socket)
+        startHeartbeat(for: socket, isPresence: false)
+        let payload = ["type": "join", "room": room, "name": name, "peerID": peerID]
+        if !(await sendJSON(payload, through: socket)) { handleConnectionLoss(for: socket) }
     }
 
     private func connectPresence() async {
@@ -203,51 +244,117 @@ final class PublicPetInteractionService: @unchecked Sendable, PetInteractionServ
         let socket = URLSession.shared.webSocketTask(with: endpoint)
         presenceTask = socket
         socket.resume()
-        await sendPresenceRegistration()
         receivePresence(on: socket)
+        startHeartbeat(for: socket, isPresence: true)
+        if !(await sendPresenceRegistration()) { handlePresenceConnectionLoss(for: socket) }
     }
 
-    private func sendPresenceRegistration() async {
-        guard let presencePeerID, let presenceName else { return }
+    private func sendPresenceRegistration() async -> Bool {
+        guard let presencePeerID, let presenceName, let socket = presenceTask else { return false }
         let payload: [String: Any] = [
             "type": "presence-register",
             "peerID": presencePeerID,
             "name": presenceName,
             "friendPeerIDs": presenceFriendPeerIDs.sorted()
         ]
-        await sendJSON(payload, through: presenceTask)
+        let sent = await sendJSON(payload, through: socket)
+        if !sent { handlePresenceConnectionLoss(for: socket) }
+        return sent
     }
 
-    private func sendJSON(_ object: [String: Any], through task: URLSessionWebSocketTask?) async {
-        guard let task, let data = try? JSONSerialization.data(withJSONObject: object), let text = String(data: data, encoding: .utf8) else { return }
-        try? await task.send(.string(text))
+    private func sendJSON(_ object: [String: Any], through task: URLSessionWebSocketTask) async -> Bool {
+        guard let data = try? JSONSerialization.data(withJSONObject: object),
+              let text = String(data: data, encoding: .utf8) else { return false }
+        do {
+            try await task.send(.string(text))
+            return true
+        } catch {
+            return false
+        }
     }
 
     private func receive(on task: URLSessionWebSocketTask) {
         task.receive { [weak self] result in
-            guard let self else { return }
-            guard self.task === task else { return }
-            switch result {
-            case let .success(.string(text)):
-                self.handleMessage(text)
-                self.receive(on: task)
-            case .success, .failure:
-                self.handleConnectionLoss(for: task)
+            Task { @MainActor [weak self] in
+                guard let self, self.task === task else { return }
+                switch result {
+                case let .success(.string(text)):
+                    self.handleMessage(text)
+                    self.receive(on: task)
+                case .success, .failure:
+                    self.handleConnectionLoss(for: task)
+                }
             }
         }
     }
 
     private func receivePresence(on task: URLSessionWebSocketTask) {
         task.receive { [weak self] result in
-            guard let self, self.presenceTask === task else { return }
-            switch result {
-            case let .success(.string(text)):
-                self.handlePresenceMessage(text)
-                self.receivePresence(on: task)
-            case .success, .failure:
-                self.handlePresenceConnectionLoss(for: task)
+            Task { @MainActor [weak self] in
+                guard let self, self.presenceTask === task else { return }
+                switch result {
+                case let .success(.string(text)):
+                    self.handlePresenceMessage(text)
+                    self.receivePresence(on: task)
+                case .success, .failure:
+                    self.handlePresenceConnectionLoss(for: task)
+                }
             }
         }
+    }
+
+    private func startHeartbeat(for socket: URLSessionWebSocketTask, isPresence: Bool) {
+        let heartbeat = Task { @MainActor [weak self, weak socket] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(20))
+                guard !Task.isCancelled, let self, let socket else { return }
+                let isCurrent = isPresence ? self.presenceTask === socket : self.task === socket
+                guard isCurrent else { return }
+                guard await self.ping(socket) else {
+                    if isPresence {
+                        self.handlePresenceConnectionLoss(for: socket)
+                    } else {
+                        self.handleConnectionLoss(for: socket)
+                    }
+                    return
+                }
+            }
+        }
+        if isPresence {
+            presenceHeartbeatTask?.cancel()
+            presenceHeartbeatTask = heartbeat
+        } else {
+            heartbeatTask?.cancel()
+            heartbeatTask = heartbeat
+        }
+    }
+
+    private func ping(_ socket: URLSessionWebSocketTask) async -> Bool {
+        let (stream, continuation) = AsyncStream<Bool>.makeStream()
+        socket.sendPing { error in
+            continuation.yield(error == nil)
+            continuation.finish()
+        }
+        let timeout = Task {
+            try? await Task.sleep(for: .seconds(8))
+            guard !Task.isCancelled else { return }
+            continuation.yield(false)
+            continuation.finish()
+        }
+        var iterator = stream.makeAsyncIterator()
+        let result = await iterator.next() ?? false
+        timeout.cancel()
+        return result
+    }
+
+    private func resolveDelivery(eventID: String, delivered: Bool) {
+        deliveryTimeoutTasks.removeValue(forKey: eventID)?.cancel()
+        pendingDeliveries.removeValue(forKey: eventID)?.resume(returning: delivered)
+    }
+
+    private func failPendingDeliveries() {
+        let eventIDs = Array(pendingDeliveries.keys)
+        for eventID in eventIDs { resolveDelivery(eventID: eventID, delivered: false) }
     }
 
     private func handleMessage(_ text: String) {
@@ -293,14 +400,25 @@ final class PublicPetInteractionService: @unchecked Sendable, PetInteractionServ
                   let frame = json["frameName"] as? String,
                   let sender = json["senderName"] as? String {
             continuation.yield(PetEvent(kind: kind, senderName: sender, frameName: frame))
+        } else if type == "friend-event-delivered",
+                  let eventID = json["eventID"] as? String {
+            resolveDelivery(eventID: eventID.lowercased(), delivered: true)
         } else if type == "friend-event-rejected",
                   let peerID = json["targetPeerID"] as? String {
+            if let eventID = json["eventID"] as? String {
+                resolveDelivery(eventID: eventID.lowercased(), delivered: false)
+            }
             connectionContinuation.yield(.friendPresence(peerID: peerID.lowercased(), isOnline: false))
         }
     }
 
     private func handleConnectionLoss(for task: URLSessionWebSocketTask) {
-        guard self.task === task, reconnectEnabled, pairingRoom != nil else { return }
+        guard self.task === task else { return }
+        self.task = nil
+        heartbeatTask?.cancel()
+        heartbeatTask = nil
+        task.cancel(with: .goingAway, reason: nil)
+        guard reconnectEnabled, pairingRoom != nil else { return }
         connectionContinuation.yield(.connectionLost)
         guard reconnectTask == nil, let room = pairingRoom, let name = pairingName, let peerID = pairingPeerID else { return }
         reconnectTask = Task { [weak self] in
@@ -314,6 +432,10 @@ final class PublicPetInteractionService: @unchecked Sendable, PetInteractionServ
     private func handlePresenceConnectionLoss(for task: URLSessionWebSocketTask) {
         guard presenceTask === task else { return }
         presenceTask = nil
+        presenceHeartbeatTask?.cancel()
+        presenceHeartbeatTask = nil
+        task.cancel(with: .goingAway, reason: nil)
+        failPendingDeliveries()
         connectionContinuation.yield(.presenceSnapshot(onlinePeerIDs: []))
         guard presenceReconnectEnabled, presenceReconnectTask == nil else { return }
         presenceReconnectTask = Task { [weak self] in

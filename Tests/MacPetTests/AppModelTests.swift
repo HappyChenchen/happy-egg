@@ -102,10 +102,32 @@ final class AppModelTests: XCTestCase {
     func testCreatedPairingCodeIsShortAndRelayCompatible() async {
         let model = AppModel(service: LocalPetInteractionService())
         let code = await model.createPublicPairing()
-        XCTAssertEqual(code.count, 8)
-        XCTAssertEqual(code, code.lowercased())
-        XCTAssertNotNil(code.range(of: "^[a-hj-km-np-z2-9]{8}$", options: .regularExpression))
+        XCTAssertEqual(code.count, 4)
+        XCTAssertNotNil(code.range(of: "^[0-9]{4}$", options: .regularExpression))
         XCTAssertEqual(model.activePairingCode, code)
+    }
+
+    func testFailedOnlineInteractionDoesNotClaimDelivery() async throws {
+        let stableID = String(repeating: "a", count: 32)
+        let friend = PetPeer(id: "legacy-room", name: "Alice", peerID: stableID)
+        let suiteName = "MacPetTests.FailedDelivery.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        defaults.set(try JSONEncoder().encode([friend]), forKey: "com.macpet.friends")
+        let service = LocalPetInteractionService(responseDelay: .zero, sendSucceeds: false)
+        let model = AppModel(service: service, defaults: defaults)
+        await model.selectFriend(friend)
+        model.startListening()
+        await Task.yield()
+        await service.simulatePresenceSnapshot(onlinePeerIDs: [stableID])
+        try await Task.sleep(for: .milliseconds(20))
+
+        await model.sendInteraction(kind: .poke)
+
+        let sentTargets = await service.sentTargetValues()
+        XCTAssertEqual(model.bubbleText, "发送失败，正在重新连接")
+        XCTAssertFalse(model.isFriendOnline(friend))
+        XCTAssertEqual(sentTargets, [stableID])
     }
 
     func testInteractionWhilePairingWaitsForFriend() async {
@@ -130,21 +152,19 @@ final class AppModelTests: XCTestCase {
         let stableID = String(repeating: "a", count: 32)
         let friend = PetPeer(id: "alice-room", name: "Alice", peerID: stableID)
         defaults.set(try JSONEncoder().encode([friend]), forKey: "com.macpet.friends")
-        let service = LocalPetInteractionService(responseDelay: .seconds(10))
+        let service = LocalPetInteractionService(responseDelay: .zero)
         let model = AppModel(service: service, defaults: defaults)
         await model.selectFriend(friend)
         model.startListening()
         await Task.yield()
         await service.simulatePresenceSnapshot(onlinePeerIDs: [stableID])
         try await Task.sleep(for: .milliseconds(20))
-        let task = Task { await model.sendInteraction(kind: .poke, frameName: "ai_buddy_07") }
-        await Task.yield()
+        await model.sendInteraction(kind: .poke, frameName: "ai_buddy_07")
         XCTAssertEqual(model.bubbleText, "已拍一拍 Alice")
         XCTAssertEqual(model.emotion, .happy)
         XCTAssertEqual(model.activeFrameName, "ai_buddy_07")
         let sentTargets = await service.sentTargetValues()
         XCTAssertEqual(sentTargets, [stableID])
-        task.cancel()
     }
 
     func testOfflineFriendCannotReceiveInteraction() async throws {

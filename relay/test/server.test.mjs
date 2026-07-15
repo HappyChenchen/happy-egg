@@ -5,9 +5,9 @@ import { createRelayServer } from '../server.mjs';
 
 const room = 'a'.repeat(64);
 
-function connect(url) {
+function connect(url, options = {}) {
   return new Promise((resolve, reject) => {
-    const socket = new WebSocket(url);
+    const socket = new WebSocket(url, options);
     socket.once('open', () => resolve(socket));
     socket.once('error', reject);
   });
@@ -93,6 +93,18 @@ test('matches uppercase and lowercase forms of the same pairing code', async (co
   bob.send(JSON.stringify({ type: 'join', room: lowercaseRoom, name: 'Bob' }));
   assert.deepEqual(await nextMessage(bob), { type: 'joined', connected: 2, peerName: 'Alice' });
   assert.deepEqual(await alicePresence, { type: 'presence', connected: 2, peerName: 'Bob' });
+});
+
+test('accepts a four digit pairing code', async (context) => {
+  const relay = createRelayServer();
+  const address = await relay.listen(0, '127.0.0.1');
+  context.after(async () => relay.close());
+  const alice = await connect(`ws://127.0.0.1:${address.port}/ws`);
+  context.after(() => alice.close());
+
+  alice.send(JSON.stringify({ type: 'join', room: '2048', name: 'Alice' }));
+
+  assert.deepEqual(await nextMessage(alice), { type: 'joined', connected: 1, peerName: null });
 });
 
 test('expires an unjoined pairing room', async (context) => {
@@ -210,17 +222,66 @@ test('routes friend events by stable profile ID only for mutual online friends',
     senderPeerID: aliceID
   });
 
+  const delivered = nextMessageWithin(alice);
+  alice.send(JSON.stringify({
+    type: 'friend-event',
+    eventID: 'e'.repeat(32),
+    targetPeerID: bobID,
+    kind: 'poke',
+    frameName: 'ai_buddy_07'
+  }));
+  assert.deepEqual(await nextMessageWithin(bob), {
+    type: 'friend-event',
+    kind: 'poke',
+    frameName: 'ai_buddy_07',
+    senderName: 'Alice',
+    senderPeerID: aliceID
+  });
+  assert.deepEqual(await delivered, { type: 'friend-event-delivered', eventID: 'e'.repeat(32) });
+
   const aliceSeesRemoval = nextMessageWithin(alice);
   bob.send(JSON.stringify({ type: 'presence-register', peerID: bobID, name: 'Bob', friendPeerIDs: [] }));
   assert.deepEqual(await nextMessage(bob), { type: 'presence-snapshot', onlinePeerIDs: [] });
   assert.deepEqual(await aliceSeesRemoval, { type: 'friend-presence', peerID: bobID, online: false });
 
   const rejected = nextMessageWithin(alice);
-  alice.send(JSON.stringify({ type: 'friend-event', targetPeerID: bobID, kind: 'poke', frameName: 'ai_buddy_00' }));
+  alice.send(JSON.stringify({
+    type: 'friend-event',
+    eventID: 'f'.repeat(32),
+    targetPeerID: bobID,
+    kind: 'poke',
+    frameName: 'ai_buddy_00'
+  }));
   assert.deepEqual(await rejected, {
     type: 'friend-event-rejected',
     targetPeerID: bobID,
-    message: 'friend unavailable'
+    message: 'friend unavailable',
+    eventID: 'f'.repeat(32)
+  });
+});
+
+test('removes an unresponsive presence session from friend online state', async (context) => {
+  const relay = createRelayServer({ heartbeatInterval: 15 });
+  const address = await relay.listen(0, '127.0.0.1');
+  context.after(async () => relay.close());
+  const url = `ws://127.0.0.1:${address.port}/ws`;
+  const alice = await connect(url);
+  const bob = await connect(url, { autoPong: false });
+  context.after(() => [alice, bob].forEach((socket) => socket.close()));
+  const aliceID = 'a'.repeat(32);
+  const bobID = 'b'.repeat(32);
+
+  alice.send(JSON.stringify({ type: 'presence-register', peerID: aliceID, name: 'Alice', friendPeerIDs: [bobID] }));
+  await nextMessage(alice);
+  const bobOnline = nextMessageWithin(alice);
+  bob.send(JSON.stringify({ type: 'presence-register', peerID: bobID, name: 'Bob', friendPeerIDs: [aliceID] }));
+  await nextMessage(bob);
+  assert.deepEqual(await bobOnline, { type: 'friend-presence', peerID: bobID, online: true });
+
+  assert.deepEqual(await nextMessageWithin(alice, 250), {
+    type: 'friend-presence',
+    peerID: bobID,
+    online: false
   });
 });
 

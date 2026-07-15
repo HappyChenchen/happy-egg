@@ -132,9 +132,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func promptForPairingCode() {
         let alert = NSAlert()
         alert.messageText = "加入配对"
-        alert.informativeText = "输入朋友发来的 8 位配对码"
+        alert.informativeText = "输入朋友发来的 4 位数字配对码"
         let input = NSTextField(string: NSPasteboard.general.string(forType: .string) ?? "")
-        input.placeholderString = "例如 abcdef23"
+        input.placeholderString = "例如 2048"
         input.font = NSFont.monospacedSystemFont(ofSize: 16, weight: .medium)
         input.controlSize = .large
         input.alignment = .center

@@ -8,7 +8,7 @@ final class AppModel {
     }
 
     private let service: any PetInteractionService
-    private static let pairingAlphabet = Array("abcdefghjkmnpqrstuvwxyz23456789")
+    private static let pairingDigits = Array("0123456789")
     private static let baseDefaultPetName = "陈团团"
     private static let legacyDefaultPetName = "我的宠物"
     private static let applicationIdentifier = "io.happypuppy.macpet"
@@ -232,11 +232,16 @@ final class AppModel {
             setState(text: "\(pairedFriend.name) 不在线，未发送", emotion: .idle, frameName: activeFrameName)
             return
         }
-        setState(text: outgoingText(for: kind, friendName: pairedFriend.name), emotion: .happy, frameName: safeFrame)
-        await service.send(
+        let delivered = await service.send(
             PetEvent(kind: kind, senderName: "我", frameName: safeFrame),
             to: pairedFriend.peerID ?? pairedFriend.id
         )
+        guard delivered else {
+            if updateFriendPresence(peerID: pairedFriend.peerID, isOnline: false) { onSocialStateChange?() }
+            setState(text: "发送失败，正在重新连接", emotion: .idle, frameName: activeFrameName)
+            return
+        }
+        setState(text: outgoingText(for: kind, friendName: pairedFriend.name), emotion: .happy, frameName: safeFrame)
     }
 
     private func receive(_ event: PetEvent) {
@@ -367,7 +372,7 @@ final class AppModel {
     }
 
     private static func makePairingCode() -> String {
-        String((0..<8).compactMap { _ in pairingAlphabet.randomElement() })
+        String((0..<4).compactMap { _ in pairingDigits.randomElement() })
     }
 
     private static func makeProfileID() -> String {
@@ -379,7 +384,8 @@ final class AppModel {
     }
 
     private static func isValidPairingCode(_ code: String) -> Bool {
-        code.range(of: "^[a-hj-km-np-z2-9]{8}$", options: .regularExpression) != nil
+        code.range(of: "^[0-9]{4}$", options: .regularExpression) != nil
+            || code.range(of: "^[a-hj-km-np-z2-9]{8}$", options: .regularExpression) != nil
             || code.range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil
     }
 

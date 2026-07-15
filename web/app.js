@@ -1,5 +1,5 @@
 const RELAY_URL = new URLSearchParams(window.location.search).get('relay') || 'wss://happypuppy.io/ws';
-const ROOM_PATTERN = /^(?:[a-hj-km-np-z2-9]{8}|[a-f0-9]{64})$/i;
+const ROOM_PATTERN = /^(?:\d{4}|[a-hj-km-np-z2-9]{8}|[a-f0-9]{64})$/i;
 const FRAME_NAMES = new Set([
   'ai_buddy_00', 'ai_buddy_03', 'ai_buddy_04', 'ai_buddy_05', 'ai_buddy_06',
   'ai_buddy_07', 'ai_buddy_08', 'ai_buddy_09', 'ai_buddy_10', 'ai_buddy_11'
@@ -56,7 +56,7 @@ function getPeerID() {
 
 function connect() {
   const code = pairingCode.value.trim().toLowerCase();
-  if (!ROOM_PATTERN.test(code)) return showMessage('请输入 8 位配对码', 'error');
+  if (!ROOM_PATTERN.test(code)) return showMessage('请输入 4 位数字配对码', 'error');
   if (socket) socket.close();
   setConnection('connecting', '连接中');
   setMessage('正在寻找宠物…');

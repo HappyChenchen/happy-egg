@@ -1,8 +1,9 @@
 import http from 'node:http';
 import { WebSocketServer, WebSocket } from 'ws';
 
-const ROOM_PATTERN = /^(?:[a-hj-km-np-z2-9]{8}|[a-f0-9]{64})$/i;
+const ROOM_PATTERN = /^(?:\d{4}|[a-hj-km-np-z2-9]{8}|[a-f0-9]{64})$/i;
 const PROFILE_ID_PATTERN = /^[a-f0-9]{32}$/i;
+const EVENT_ID_PATTERN = PROFILE_ID_PATTERN;
 const EVENT_KINDS = new Set(['poke', 'heart', 'celebrate']);
 const FRAME_NAMES = new Set([
   'ai_buddy_00', 'ai_buddy_03', 'ai_buddy_04', 'ai_buddy_05', 'ai_buddy_06',
@@ -11,6 +12,13 @@ const FRAME_NAMES = new Set([
 
 function send(socket, payload) {
   if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(payload));
+}
+
+function sendAndConfirm(socket, payload) {
+  return new Promise((resolve) => {
+    if (socket.readyState !== WebSocket.OPEN) return resolve(false);
+    socket.send(JSON.stringify(payload), (error) => resolve(error == null));
+  });
 }
 
 function validName(name) {
@@ -29,7 +37,7 @@ function rateLimited(meta) {
   return false;
 }
 
-export function createRelayServer({ pairingTTL = 10 * 60_000 } = {}) {
+export function createRelayServer({ pairingTTL = 10 * 60_000, heartbeatInterval = 30_000 } = {}) {
   const rooms = new Map();
   const metadata = new WeakMap();
   const roomExpiryTimers = new Map();
@@ -44,6 +52,17 @@ export function createRelayServer({ pairingTTL = 10 * 60_000 } = {}) {
     response.writeHead(404).end();
   });
   const wss = new WebSocketServer({ noServer: true });
+  const heartbeatTimer = heartbeatInterval > 0 ? setInterval(() => {
+    for (const socket of wss.clients) {
+      if (socket.readyState !== WebSocket.OPEN) continue;
+      if (socket.isAlive === false) {
+        socket.terminate();
+        continue;
+      }
+      socket.isAlive = false;
+      socket.ping();
+    }
+  }, heartbeatInterval) : null;
 
   function clearRoomExpiry(roomID) {
     const timer = roomExpiryTimers.get(roomID);
@@ -149,8 +168,11 @@ export function createRelayServer({ pairingTTL = 10 * 60_000 } = {}) {
     send(socket, { type: 'presence-snapshot', onlinePeerIDs });
   }
 
-  function routeFriendEvent(socket, meta, message) {
+  async function routeFriendEvent(socket, meta, message) {
     if (typeof message.targetPeerID !== 'string' || !PROFILE_ID_PATTERN.test(message.targetPeerID)) {
+      return reject(socket, 'invalid friend event');
+    }
+    if (message.eventID !== undefined && (typeof message.eventID !== 'string' || !EVENT_ID_PATTERN.test(message.eventID))) {
       return reject(socket, 'invalid friend event');
     }
     if (!EVENT_KINDS.has(message.kind) || !FRAME_NAMES.has(message.frameName)) {
@@ -158,23 +180,30 @@ export function createRelayServer({ pairingTTL = 10 * 60_000 } = {}) {
     }
     if (rateLimited(meta)) return reject(socket, 'rate limit');
     const targetPeerID = message.targetPeerID.toLowerCase();
+    const eventID = typeof message.eventID === 'string' ? message.eventID.toLowerCase() : null;
     const targetSessions = [...(onlineProfiles.get(targetPeerID) ?? [])].filter((targetSocket) => {
       const targetMeta = metadata.get(targetSocket);
       return targetMeta?.mode === 'presence' && targetMeta.watchedPeerIDs.has(meta.peerID);
     });
     if (!meta.watchedPeerIDs.has(targetPeerID) || targetSessions.length === 0) {
-      send(socket, { type: 'friend-event-rejected', targetPeerID, message: 'friend unavailable' });
+      send(socket, { type: 'friend-event-rejected', targetPeerID, message: 'friend unavailable', ...(eventID ? { eventID } : {}) });
       return;
     }
-    for (const targetSocket of targetSessions) {
-      send(targetSocket, {
+    const deliveryResults = await Promise.all(targetSessions.map((targetSocket) =>
+      sendAndConfirm(targetSocket, {
         type: 'friend-event',
         kind: message.kind,
         frameName: message.frameName,
         senderName: meta.name,
         senderPeerID: meta.peerID
-      });
+      })
+    ));
+    if (!deliveryResults.some(Boolean)) {
+      for (const targetSocket of targetSessions) targetSocket.terminate();
+      send(socket, { type: 'friend-event-rejected', targetPeerID, message: 'friend unavailable', ...(eventID ? { eventID } : {}) });
+      return;
     }
+    if (eventID) send(socket, { type: 'friend-event-delivered', eventID });
   }
 
   function reject(socket, message) {
@@ -183,7 +212,10 @@ export function createRelayServer({ pairingTTL = 10 * 60_000 } = {}) {
   }
 
   wss.on('connection', (socket) => {
+    socket.isAlive = true;
+    socket.on('pong', () => { socket.isAlive = true; });
     socket.on('message', (raw) => {
+      socket.isAlive = true;
       let message;
       try { message = JSON.parse(raw.toString()); } catch { return reject(socket, 'invalid JSON'); }
 
@@ -222,7 +254,10 @@ export function createRelayServer({ pairingTTL = 10 * 60_000 } = {}) {
       const meta = metadata.get(socket);
       if (!meta) return reject(socket, 'join required');
       if (meta.mode === 'presence') {
-        if (message.type === 'friend-event') return routeFriendEvent(socket, meta, message);
+        if (message.type === 'friend-event') {
+          void routeFriendEvent(socket, meta, message);
+          return;
+        }
         return reject(socket, 'invalid presence message');
       }
 
@@ -263,6 +298,7 @@ export function createRelayServer({ pairingTTL = 10 * 60_000 } = {}) {
       return server.address();
     },
     async close() {
+      if (heartbeatTimer) clearInterval(heartbeatTimer);
       for (const timer of roomExpiryTimers.values()) clearTimeout(timer);
       roomExpiryTimers.clear();
       for (const socket of wss.clients) socket.terminate();
