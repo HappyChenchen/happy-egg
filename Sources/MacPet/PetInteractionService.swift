@@ -31,6 +31,8 @@ actor LocalPetInteractionService: PetInteractionService {
     private var peers: [PetPeer] = []
     private var updatedNames: [String] = []
     private var presenceSubscriptions: [Set<String>] = []
+    private var sentTargets: [String] = []
+    private var pairedRooms: [String] = []
 
     init(responseDelay: Duration = .milliseconds(850)) {
         var savedContinuation: AsyncStream<PetEvent>.Continuation!
@@ -51,7 +53,7 @@ actor LocalPetInteractionService: PetInteractionService {
         peers
     }
 
-    func pair(room: String, name: String, peerID: String) async {}
+    func pair(room: String, name: String, peerID: String) async { pairedRooms.append(room) }
     func stop() async {}
     func updateName(_ name: String) async { updatedNames.append(name) }
     func updatePresence(peerID: String, name: String, friendPeerIDs: Set<String>) async {
@@ -60,12 +62,15 @@ actor LocalPetInteractionService: PetInteractionService {
 
     func updatedNameValues() -> [String] { updatedNames }
     func presenceSubscriptionValues() -> [Set<String>] { presenceSubscriptions }
+    func sentTargetValues() -> [String] { sentTargets }
+    func pairedRoomValues() -> [String] { pairedRooms }
 
     func setPeers(_ peers: [PetPeer]) {
         self.peers = peers
     }
 
     func send(_ event: PetEvent, to peerID: String) async {
+        sentTargets.append(peerID)
         try? await Task.sleep(for: responseDelay)
         let friendName = peers.first(where: { $0.id == peerID })?.name ?? "朋友"
         continuation.yield(PetEvent(kind: event.kind, senderName: friendName, frameName: event.frameName))
@@ -162,7 +167,16 @@ final class PublicPetInteractionService: @unchecked Sendable, PetInteractionServ
     }
 
     func send(_ event: PetEvent, to peerID: String) async {
-        await sendJSON(["type": "event", "kind": event.kind.rawValue, "frameName": event.frameName], through: task)
+        if peerID.range(of: "^[a-fA-F0-9]{32}$", options: .regularExpression) != nil {
+            await sendJSON([
+                "type": "friend-event",
+                "targetPeerID": peerID.lowercased(),
+                "kind": event.kind.rawValue,
+                "frameName": event.frameName
+            ], through: presenceTask)
+        } else {
+            await sendJSON(["type": "event", "kind": event.kind.rawValue, "frameName": event.frameName], through: task)
+        }
     }
 
     func updateName(_ name: String) async {
@@ -286,6 +300,15 @@ final class PublicPetInteractionService: @unchecked Sendable, PetInteractionServ
                   let peerID = json["peerID"] as? String,
                   let isOnline = json["online"] as? Bool {
             connectionContinuation.yield(.friendPresence(peerID: peerID.lowercased(), isOnline: isOnline))
+        } else if type == "friend-event",
+                  let kindText = json["kind"] as? String,
+                  let kind = PetEvent.Kind(rawValue: kindText),
+                  let frame = json["frameName"] as? String,
+                  let sender = json["senderName"] as? String {
+            continuation.yield(PetEvent(kind: kind, senderName: sender, frameName: frame))
+        } else if type == "friend-event-rejected",
+                  let peerID = json["targetPeerID"] as? String {
+            connectionContinuation.yield(.friendPresence(peerID: peerID.lowercased(), isOnline: false))
         }
     }
 

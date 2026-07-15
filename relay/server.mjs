@@ -71,8 +71,18 @@ export function createRelayServer({ pairingTTL = 10 * 60_000 } = {}) {
     }
   }
 
-  function notifyPresence(peerID, online) {
+  function profileWatches(peerID, otherPeerID) {
+    return [...(onlineProfiles.get(peerID) ?? [])].some((session) => {
+      const sessionMeta = metadata.get(session);
+      return sessionMeta?.mode === 'presence' && sessionMeta.watchedPeerIDs.has(otherPeerID);
+    });
+  }
+
+  function notifyProfilePresence(peerID) {
     for (const watcher of presenceWatchers.get(peerID) ?? []) {
+      const watcherMeta = metadata.get(watcher);
+      if (watcherMeta?.mode !== 'presence') continue;
+      const online = onlineProfiles.has(peerID) && profileWatches(peerID, watcherMeta.peerID);
       send(watcher, { type: 'friend-presence', peerID, online });
     }
   }
@@ -81,11 +91,9 @@ export function createRelayServer({ pairingTTL = 10 * 60_000 } = {}) {
     removeWatcherSubscriptions(socket, meta.watchedPeerIDs);
     const sessions = onlineProfiles.get(meta.peerID);
     sessions?.delete(socket);
-    if (sessions?.size === 0) {
-      onlineProfiles.delete(meta.peerID);
-      notifyPresence(meta.peerID, false);
-    }
+    if (sessions?.size === 0) onlineProfiles.delete(meta.peerID);
     metadata.delete(socket);
+    notifyProfilePresence(meta.peerID);
   }
 
   function leave(socket) {
@@ -124,11 +132,9 @@ export function createRelayServer({ pairingTTL = 10 * 60_000 } = {}) {
     } else {
       leave(socket);
       const sessions = onlineProfiles.get(peerID) ?? new Set();
-      const wasOnline = sessions.size > 0;
       sessions.add(socket);
       onlineProfiles.set(peerID, sessions);
       metadata.set(socket, { mode: 'presence', peerID, name: message.name.trim(), watchedPeerIDs, sentAt: [] });
-      if (!wasOnline) notifyPresence(peerID, true);
     }
 
     for (const friendID of watchedPeerIDs) {
@@ -136,8 +142,39 @@ export function createRelayServer({ pairingTTL = 10 * 60_000 } = {}) {
       watchers.add(socket);
       presenceWatchers.set(friendID, watchers);
     }
-    const onlinePeerIDs = [...watchedPeerIDs].filter((friendID) => onlineProfiles.has(friendID));
+    notifyProfilePresence(peerID);
+    const onlinePeerIDs = [...watchedPeerIDs].filter((friendID) =>
+      onlineProfiles.has(friendID) && profileWatches(friendID, peerID)
+    );
     send(socket, { type: 'presence-snapshot', onlinePeerIDs });
+  }
+
+  function routeFriendEvent(socket, meta, message) {
+    if (typeof message.targetPeerID !== 'string' || !PROFILE_ID_PATTERN.test(message.targetPeerID)) {
+      return reject(socket, 'invalid friend event');
+    }
+    if (!EVENT_KINDS.has(message.kind) || !FRAME_NAMES.has(message.frameName)) {
+      return reject(socket, 'invalid friend event');
+    }
+    if (rateLimited(meta)) return reject(socket, 'rate limit');
+    const targetPeerID = message.targetPeerID.toLowerCase();
+    const targetSessions = [...(onlineProfiles.get(targetPeerID) ?? [])].filter((targetSocket) => {
+      const targetMeta = metadata.get(targetSocket);
+      return targetMeta?.mode === 'presence' && targetMeta.watchedPeerIDs.has(meta.peerID);
+    });
+    if (!meta.watchedPeerIDs.has(targetPeerID) || targetSessions.length === 0) {
+      send(socket, { type: 'friend-event-rejected', targetPeerID, message: 'friend unavailable' });
+      return;
+    }
+    for (const targetSocket of targetSessions) {
+      send(targetSocket, {
+        type: 'friend-event',
+        kind: message.kind,
+        frameName: message.frameName,
+        senderName: meta.name,
+        senderPeerID: meta.peerID
+      });
+    }
   }
 
   function reject(socket, message) {
@@ -184,7 +221,10 @@ export function createRelayServer({ pairingTTL = 10 * 60_000 } = {}) {
 
       const meta = metadata.get(socket);
       if (!meta) return reject(socket, 'join required');
-      if (meta.mode !== 'room') return reject(socket, 'invalid presence message');
+      if (meta.mode === 'presence') {
+        if (message.type === 'friend-event') return routeFriendEvent(socket, meta, message);
+        return reject(socket, 'invalid presence message');
+      }
 
       if (message.type === 'profile') {
         if (!validName(message.name)) return reject(socket, 'invalid profile');

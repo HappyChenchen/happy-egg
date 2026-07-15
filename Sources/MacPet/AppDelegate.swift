@@ -197,9 +197,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func updateMenuState() {
         updateFriendMenus()
         if let friend = model.confirmedFriend {
-            pairingStatusItem?.title = "当前好友：\(friend.name) · \(model.isFriendOnline(friend) ? "在线" : "离线")"
-            interactionItem?.title = "拍一拍 \(friend.name)"
-            interactionItem?.isEnabled = true
+            let isOnline = model.isFriendOnline(friend)
+            pairingStatusItem?.title = "当前好友：\(friend.name) · \(isOnline ? "在线" : "离线")"
+            interactionItem?.title = isOnline ? "拍一拍 \(friend.name)" : "\(friend.name) 不在线"
+            interactionItem?.isEnabled = isOnline
         } else if let code = model.activePairingCode {
             pairingStatusItem?.title = "配对码：" + code
             interactionItem?.title = "等待好友加入"

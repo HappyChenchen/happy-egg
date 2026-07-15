@@ -129,12 +129,23 @@ final class PetView: NSView {
         }
         menu.addItem(NSMenuItem.separator())
         if let pairedFriend = confirmedFriend {
-            let currentFriendItem = NSMenuItem(title: "当前好友：\(pairedFriend.name)", action: nil, keyEquivalent: "")
+            let isOnline = pairedFriend.peerID.map { onlineFriendPeerIDs.contains($0.lowercased()) } ?? false
+            let currentFriendItem = NSMenuItem(
+                title: "当前好友：\(pairedFriend.name) · \(isOnline ? "在线" : "离线")",
+                action: nil,
+                keyEquivalent: ""
+            )
             currentFriendItem.isEnabled = false
             menu.addItem(currentFriendItem)
-            menu.addItem(withTitle: "拍一拍 \(pairedFriend.name)", action: #selector(pokeFriend), keyEquivalent: "")
-            menu.addItem(withTitle: "送一颗爱心", action: #selector(sendHeart), keyEquivalent: "")
-            menu.addItem(withTitle: "一起庆祝", action: #selector(celebrate), keyEquivalent: "")
+            if isOnline {
+                menu.addItem(withTitle: "拍一拍 \(pairedFriend.name)", action: #selector(pokeFriend), keyEquivalent: "")
+                menu.addItem(withTitle: "送一颗爱心", action: #selector(sendHeart), keyEquivalent: "")
+                menu.addItem(withTitle: "一起庆祝", action: #selector(celebrate), keyEquivalent: "")
+            } else {
+                let unavailableItem = NSMenuItem(title: "好友不在线，暂时无法互动", action: nil, keyEquivalent: "")
+                unavailableItem.isEnabled = false
+                menu.addItem(unavailableItem)
+            }
             menu.addItem(NSMenuItem.separator())
             menu.addItem(withTitle: "断开连接", action: #selector(unpair), keyEquivalent: "")
         } else {

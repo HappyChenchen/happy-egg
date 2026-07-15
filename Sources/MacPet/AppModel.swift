@@ -192,9 +192,15 @@ final class AppModel {
 
     func selectFriend(_ friend: PetPeer) async {
         pairedFriend = friend
-        await service.pair(room: friend.id, name: petName, peerID: peerID)
+        if friend.peerID == nil {
+            await service.pair(room: friend.id, name: petName, peerID: peerID)
+        } else {
+            await service.stop()
+        }
         onPeersChange?()
-        setState(text: "正在连接 \(friend.name)", emotion: .happy, frameName: activeFrameName)
+        let isOnline = isFriendOnline(friend)
+        let message = isOnline ? "已选择 \(friend.name)" : "\(friend.name) 当前不在线"
+        setState(text: message, emotion: isOnline ? .happy : .idle, frameName: activeFrameName)
     }
 
     func isFriendOnline(_ friend: PetPeer) -> Bool {
@@ -236,8 +242,15 @@ final class AppModel {
             setState(text: "本地互动成功，配对后可拍朋友", emotion: .happy, frameName: safeFrame)
             return
         }
+        guard isFriendOnline(pairedFriend) else {
+            setState(text: "\(pairedFriend.name) 不在线，未发送", emotion: .idle, frameName: activeFrameName)
+            return
+        }
         setState(text: outgoingText(for: kind, friendName: pairedFriend.name), emotion: .happy, frameName: safeFrame)
-        await service.send(PetEvent(kind: kind, senderName: "我", frameName: safeFrame), to: pairedFriend.id)
+        await service.send(
+            PetEvent(kind: kind, senderName: "我", frameName: safeFrame),
+            to: pairedFriend.peerID ?? pairedFriend.id
+        )
     }
 
     private func receive(_ event: PetEvent) {

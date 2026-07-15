@@ -114,16 +114,60 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(model.activeFrameName, "ai_buddy_07")
     }
 
-    func testPokeTargetsPairedFriendAndSynchronizesFrame() async {
+    func testPokeTargetsPairedFriendStableIDAndSynchronizesFrame() async throws {
+        let suiteName = "MacPetTests.OnlineInteraction.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let stableID = String(repeating: "a", count: 32)
+        let friend = PetPeer(id: "alice-room", name: "Alice", peerID: stableID)
+        defaults.set(try JSONEncoder().encode([friend]), forKey: "com.macpet.friends")
         let service = LocalPetInteractionService(responseDelay: .seconds(10))
-        let model = AppModel(service: service)
-        model.pair(with: PetPeer(id: "alice-device", name: "Alice"))
+        let model = AppModel(service: service, defaults: defaults)
+        model.pair(with: friend)
+        model.startListening()
+        await Task.yield()
+        await service.simulatePresenceSnapshot(onlinePeerIDs: [stableID])
+        try await Task.sleep(for: .milliseconds(20))
         let task = Task { await model.sendInteraction(kind: .poke, frameName: "ai_buddy_07") }
         await Task.yield()
         XCTAssertEqual(model.bubbleText, "已拍一拍 Alice")
         XCTAssertEqual(model.emotion, .happy)
         XCTAssertEqual(model.activeFrameName, "ai_buddy_07")
+        let sentTargets = await service.sentTargetValues()
+        XCTAssertEqual(sentTargets, [stableID])
         task.cancel()
+    }
+
+    func testOfflineFriendCannotReceiveInteraction() async throws {
+        let suiteName = "MacPetTests.OfflineInteraction.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let stableID = String(repeating: "c", count: 32)
+        let friend = PetPeer(id: "cara-room", name: "Cara", peerID: stableID)
+        defaults.set(try JSONEncoder().encode([friend]), forKey: "com.macpet.friends")
+        let service = LocalPetInteractionService(responseDelay: .zero)
+        let model = AppModel(service: service, defaults: defaults)
+        model.pair(with: friend)
+
+        await model.sendInteraction(kind: .poke)
+
+        XCTAssertEqual(model.bubbleText, "Cara 不在线，未发送")
+        let sentTargets = await service.sentTargetValues()
+        XCTAssertEqual(sentTargets, [])
+    }
+
+    func testSelectingSavedFriendUsesPresenceInsteadOfRejoiningExpiredPairingRoom() async {
+        let stableID = String(repeating: "d", count: 32)
+        let friend = PetPeer(id: "old-pairing-code", name: "Dora", peerID: stableID)
+        let service = LocalPetInteractionService(responseDelay: .zero)
+        let model = AppModel(service: service)
+
+        await model.selectFriend(friend)
+
+        XCTAssertEqual(model.pairedFriend, friend)
+        XCTAssertEqual(model.bubbleText, "Dora 当前不在线")
+        let pairedRooms = await service.pairedRoomValues()
+        XCTAssertTrue(pairedRooms.isEmpty)
     }
 
     func testPetSizeChangesToChosenScale() {

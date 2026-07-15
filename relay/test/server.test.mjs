@@ -17,6 +17,13 @@ function nextMessage(socket) {
   return new Promise((resolve) => socket.once('message', (data) => resolve(JSON.parse(data.toString()))));
 }
 
+function nextMessageWithin(socket, timeout = 300) {
+  return Promise.race([
+    nextMessage(socket),
+    new Promise((_, reject) => setTimeout(() => reject(new Error('timed out waiting for websocket message')), timeout))
+  ]);
+}
+
 test('forwards an event only to the other socket in the room', async (context) => {
   const relay = createRelayServer();
   const address = await relay.listen(0, '127.0.0.1');
@@ -133,6 +140,76 @@ test('reports online snapshots and realtime friend presence changes', async (con
   const bobOffline = nextMessage(alice);
   bob.close();
   assert.deepEqual(await bobOffline, { type: 'friend-presence', peerID: bobID, online: false });
+});
+
+test('reports a friend online only while both profiles keep each other', async (context) => {
+  const relay = createRelayServer();
+  const address = await relay.listen(0, '127.0.0.1');
+  context.after(async () => relay.close());
+  const url = `ws://127.0.0.1:${address.port}/ws`;
+  const [alice, bob] = await Promise.all([connect(url), connect(url)]);
+  context.after(() => [alice, bob].forEach((socket) => socket.close()));
+  const aliceID = 'a'.repeat(32);
+  const bobID = 'b'.repeat(32);
+
+  alice.send(JSON.stringify({ type: 'presence-register', peerID: aliceID, name: 'Alice', friendPeerIDs: [bobID] }));
+  assert.deepEqual(await nextMessage(alice), { type: 'presence-snapshot', onlinePeerIDs: [] });
+
+  const stillOffline = nextMessageWithin(alice);
+  bob.send(JSON.stringify({ type: 'presence-register', peerID: bobID, name: 'Bob', friendPeerIDs: [] }));
+  assert.deepEqual(await nextMessage(bob), { type: 'presence-snapshot', onlinePeerIDs: [] });
+  assert.deepEqual(await stillOffline, { type: 'friend-presence', peerID: bobID, online: false });
+
+  const nowMutual = nextMessageWithin(alice);
+  bob.send(JSON.stringify({ type: 'presence-register', peerID: bobID, name: 'Bob', friendPeerIDs: [aliceID] }));
+  assert.deepEqual(await nextMessage(bob), { type: 'presence-snapshot', onlinePeerIDs: [aliceID] });
+  assert.deepEqual(await nowMutual, { type: 'friend-presence', peerID: bobID, online: true });
+
+  const removedByBob = nextMessageWithin(alice);
+  bob.send(JSON.stringify({ type: 'presence-register', peerID: bobID, name: 'Bob', friendPeerIDs: [] }));
+  assert.deepEqual(await nextMessage(bob), { type: 'presence-snapshot', onlinePeerIDs: [] });
+  assert.deepEqual(await removedByBob, { type: 'friend-presence', peerID: bobID, online: false });
+});
+
+test('routes friend events by stable profile ID only for mutual online friends', async (context) => {
+  const relay = createRelayServer();
+  const address = await relay.listen(0, '127.0.0.1');
+  context.after(async () => relay.close());
+  const url = `ws://127.0.0.1:${address.port}/ws`;
+  const [alice, bob] = await Promise.all([connect(url), connect(url)]);
+  context.after(() => [alice, bob].forEach((socket) => socket.close()));
+  const aliceID = 'a'.repeat(32);
+  const bobID = 'b'.repeat(32);
+
+  alice.send(JSON.stringify({ type: 'presence-register', peerID: aliceID, name: 'Alice', friendPeerIDs: [bobID] }));
+  await nextMessage(alice);
+  const aliceSeesBob = nextMessage(alice);
+  bob.send(JSON.stringify({ type: 'presence-register', peerID: bobID, name: 'Bob', friendPeerIDs: [aliceID] }));
+  await nextMessage(bob);
+  await aliceSeesBob;
+
+  const received = nextMessageWithin(bob);
+  alice.send(JSON.stringify({ type: 'friend-event', targetPeerID: bobID, kind: 'heart', frameName: 'ai_buddy_03' }));
+  assert.deepEqual(await received, {
+    type: 'friend-event',
+    kind: 'heart',
+    frameName: 'ai_buddy_03',
+    senderName: 'Alice',
+    senderPeerID: aliceID
+  });
+
+  const aliceSeesRemoval = nextMessageWithin(alice);
+  bob.send(JSON.stringify({ type: 'presence-register', peerID: bobID, name: 'Bob', friendPeerIDs: [] }));
+  assert.deepEqual(await nextMessage(bob), { type: 'presence-snapshot', onlinePeerIDs: [] });
+  assert.deepEqual(await aliceSeesRemoval, { type: 'friend-presence', peerID: bobID, online: false });
+
+  const rejected = nextMessageWithin(alice);
+  alice.send(JSON.stringify({ type: 'friend-event', targetPeerID: bobID, kind: 'poke', frameName: 'ai_buddy_00' }));
+  assert.deepEqual(await rejected, {
+    type: 'friend-event-rejected',
+    targetPeerID: bobID,
+    message: 'friend unavailable'
+  });
 });
 
 test('rejects invalid presence subscriptions', async (context) => {
