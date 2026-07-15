@@ -3,10 +3,9 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
-swift package clean
 swift build -c release
 
-BUILD_DIR="$ROOT/.build/arm64-apple-macosx/release"
+BUILD_DIR="$(swift build -c release --show-bin-path)"
 APP="$ROOT/outputs/MacPet.app"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"

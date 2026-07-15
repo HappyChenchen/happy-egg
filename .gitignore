@@ -1,6 +1,15 @@
 .build/
 .swiftpm/
 .DS_Store
+.env
+.env.*
+!.env.example
+.idea/
+.vscode/
+*.xcuserstate
+xcuserdata/
+*.zip
+coverage/
 outputs/
 work/
 node_modules/

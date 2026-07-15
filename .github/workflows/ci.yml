@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  macos-client:
+    name: macOS client
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Show Swift version
+        run: swift --version
+      - name: Run client tests
+        run: make test-mac
+      - name: Package application
+        run: make package
+
+  relay-and-web:
+    name: Relay and web
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: relay/package-lock.json
+      - name: Install relay dependencies
+        run: npm ci --prefix relay
+      - name: Run relay tests
+        run: make test-relay
+      - name: Check JavaScript syntax
+        run: make check-js
+      - name: Validate deployment configuration
+        run: docker compose -f deploy/compose.yaml config
+      - name: Build relay image
+        run: docker build --tag macpet-relay:ci relay
