@@ -12,18 +12,18 @@ swift run MacPet
 
 需要 macOS 14+ 与 Xcode Command Line Tools。启动后，菜单栏会出现爪印图标；拖动宠物可移动它。
 
-## 给朋友安装测试版
+## 安装与分发
 
-### 方式一：发送 MacPet.app
+### 方式一：直接安装 MacPet.app
 
 先在项目目录打包，再把生成的 App 压缩后发给朋友：
 
 ```sh
 ./packaging/package-app.sh
-ditto -c -k --sequesterRsrc --keepParent outputs/MacPet.app MacPet-test.zip
+ditto -c -k --sequesterRsrc --keepParent outputs/MacPet.app MacPet.zip
 ```
 
-朋友解压后把 `MacPet.app` 放进“应用程序”。当前测试版没有 Apple Developer 公证，首次打开可能出现“无法验证开发者”。请只在确认 App 来源可信时执行：
+解压后把 `MacPet.app` 放进“应用程序”。当前版本没有 Apple Developer 公证，首次打开可能出现“无法验证开发者”。请只在确认 App 来源可信时执行：
 
 ```sh
 xattr -dr com.apple.quarantine /Applications/MacPet.app
@@ -32,9 +32,9 @@ open /Applications/MacPet.app
 
 也可以先右击 `MacPet.app` 选择“打开”；如果仍被拦截，再使用上面的命令。
 
-### 方式二：朋友从源码打包
+### 方式二：从源码打包
 
-这种方式不需要付费 Apple Developer 账号，但朋友的 Mac 需要安装 Xcode Command Line Tools：
+这种方式不需要付费 Apple Developer 账号，但需要安装 Xcode Command Line Tools：
 
 ```sh
 git clone https://github.com/HappyChenchen/happy-egg.git
