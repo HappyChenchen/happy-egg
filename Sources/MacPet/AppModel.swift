@@ -174,6 +174,22 @@ final class AppModel {
         Task { await service.stop() }
     }
 
+    func removeFriend(_ friend: PetPeer) {
+        let previousCount = friends.count
+        friends.removeAll { Self.matchesFriend($0, friend) }
+        guard friends.count != previousCount else { return }
+        if let friendPeerID = friend.peerID?.lowercased() {
+            onlineFriendPeerIDs.remove(friendPeerID)
+        }
+        let removedCurrentFriend = pairedFriend.map { Self.matchesFriend($0, friend) } ?? false
+        if removedCurrentFriend { pairedFriend = nil }
+        persistFriends()
+        refreshPresenceSubscription()
+        onPeersChange?()
+        setState(text: "已删除好友 \(friend.name)", emotion: .idle, frameName: activeFrameName)
+        if removedCurrentFriend { Task { await service.stop() } }
+    }
+
     func selectFriend(_ friend: PetPeer) async {
         pairedFriend = friend
         await service.pair(room: friend.id, name: petName, peerID: peerID)
@@ -339,6 +355,10 @@ final class AppModel {
             result.append(friend)
         }
         return result
+    }
+
+    private static func matchesFriend(_ lhs: PetPeer, _ rhs: PetPeer) -> Bool {
+        lhs.id == rhs.id || (lhs.peerID != nil && lhs.peerID == rhs.peerID)
     }
 
     private static func isPendingFriendName(_ name: String) -> Bool {

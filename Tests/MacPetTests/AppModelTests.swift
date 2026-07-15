@@ -213,6 +213,31 @@ final class AppModelTests: XCTestCase {
         XCTAssertFalse(model.isFriendOnline(friend))
     }
 
+    func testRemovingFriendClearsPairingPresenceAndPersistedRecord() async throws {
+        let suiteName = "MacPetTests.RemoveFriend.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let stableID = String(repeating: "c", count: 32)
+        let friend = PetPeer(id: "room-c", name: "Cara", peerID: stableID)
+        defaults.set(try JSONEncoder().encode([friend]), forKey: "com.macpet.friends")
+        let service = LocalPetInteractionService(responseDelay: .zero)
+        let model = AppModel(service: service, defaults: defaults)
+        model.pair(with: friend)
+        model.startListening()
+        await Task.yield()
+        await service.simulatePresenceSnapshot(onlinePeerIDs: [stableID])
+        try await Task.sleep(for: .milliseconds(20))
+        XCTAssertTrue(model.isFriendOnline(friend))
+
+        model.removeFriend(friend)
+
+        XCTAssertTrue(model.friends.isEmpty)
+        XCTAssertNil(model.pairedFriend)
+        XCTAssertFalse(model.isFriendOnline(friend))
+        let restored = AppModel(service: LocalPetInteractionService(), defaults: defaults)
+        XCTAssertTrue(restored.friends.isEmpty)
+    }
+
     func testSameNamedFriendKeepsOnlyNewestPairing() async throws {
         let suiteName = "MacPetTests.Friends.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!

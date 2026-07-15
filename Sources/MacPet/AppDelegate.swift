@@ -47,6 +47,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.promptForPairingCode()
         } onSelectFriend: { [weak self] friend in
             Task { await self?.model.selectFriend(friend) }
+        } onRemoveFriend: { [weak self] friend in
+            self?.confirmRemoveFriend(friend)
         } onEditProfile: { [weak self] in
             self?.editProfile()
         }
@@ -141,6 +143,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         alert.window.initialFirstResponder = input
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         Task { await model.joinPublicPairing(code: input.stringValue) }
+    }
+
+    private func confirmRemoveFriend(_ friend: PetPeer) {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "删除好友“\(friend.name)”？"
+        alert.informativeText = "删除后需要重新配对才能互动。"
+        alert.addButton(withTitle: "删除")
+        alert.addButton(withTitle: "取消")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        model.removeFriend(friend)
     }
 
     @objc private func pokeFriend() { Task { await model.sendInteraction(kind: .poke) } }

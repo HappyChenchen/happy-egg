@@ -22,6 +22,7 @@ final class PetView: NSView {
     var friends: [PetPeer] = []
     var onlineFriendPeerIDs: Set<String> = []
     var onSelectFriend: ((PetPeer) -> Void)?
+    var onRemoveFriend: ((PetPeer) -> Void)?
     var onEditProfile: (() -> Void)?
     var pairedFriend: PetPeer?
     var petName = "我的宠物"
@@ -103,37 +104,39 @@ final class PetView: NSView {
         }
         friendsItem.submenu = friendsMenu
         menu.addItem(friendsItem)
-        menu.addItem(NSMenuItem.separator())
-        if let pairedFriend = confirmedFriend {
-            let pairedItem = NSMenuItem(title: "已配对：\(pairedFriend.name)", action: nil, keyEquivalent: "")
-            pairedItem.isEnabled = false
-            menu.addItem(pairedItem)
-            menu.addItem(withTitle: "取消配对", action: #selector(unpair), keyEquivalent: "")
-        } else {
-            let pairingItem = NSMenuItem(title: "公网配对", action: nil, keyEquivalent: "")
-            let pairingMenu = NSMenu()
-            if let pairedFriend, pairedFriend.name == "配对码已创建" {
-                let currentCodeItem = NSMenuItem(title: "当前配对码：\(pairedFriend.id)", action: nil, keyEquivalent: "")
-                currentCodeItem.isEnabled = false
-                pairingMenu.addItem(currentCodeItem)
-                pairingMenu.addItem(NSMenuItem.separator())
-            }
-            let createItem = NSMenuItem(title: "创建短配对码（复制）", action: #selector(createPublicPairing), keyEquivalent: "")
-            createItem.target = self
-            pairingMenu.addItem(createItem)
-            let joinItem = NSMenuItem(title: "输入短配对码", action: #selector(joinPublicPairing), keyEquivalent: "")
-            joinItem.target = self
-            pairingMenu.addItem(joinItem)
-            pairingItem.submenu = pairingMenu
-            menu.addItem(pairingItem)
+        let addFriendItem = NSMenuItem(title: "添加好友", action: nil, keyEquivalent: "")
+        let addFriendMenu = NSMenu()
+        if let pairedFriend, pairedFriend.name == "配对码已创建" {
+            let currentCodeItem = NSMenuItem(title: "配对码：\(pairedFriend.id)", action: nil, keyEquivalent: "")
+            currentCodeItem.isEnabled = false
+            addFriendMenu.addItem(currentCodeItem)
+            addFriendMenu.addItem(NSMenuItem.separator())
         }
+        let createItem = NSMenuItem(title: "生成配对码", action: #selector(createPublicPairing), keyEquivalent: "")
+        createItem.target = self
+        addFriendMenu.addItem(createItem)
+        let joinItem = NSMenuItem(title: "输入配对码…", action: #selector(joinPublicPairing), keyEquivalent: "")
+        joinItem.target = self
+        addFriendMenu.addItem(joinItem)
+        addFriendItem.submenu = addFriendMenu
+        menu.addItem(addFriendItem)
         menu.addItem(NSMenuItem.separator())
         if let pairedFriend = confirmedFriend {
+            let currentFriendItem = NSMenuItem(title: "当前好友：\(pairedFriend.name)", action: nil, keyEquivalent: "")
+            currentFriendItem.isEnabled = false
+            menu.addItem(currentFriendItem)
             menu.addItem(withTitle: "拍一拍 \(pairedFriend.name)", action: #selector(pokeFriend), keyEquivalent: "")
             menu.addItem(withTitle: "送一颗爱心", action: #selector(sendHeart), keyEquivalent: "")
             menu.addItem(withTitle: "一起庆祝", action: #selector(celebrate), keyEquivalent: "")
+            menu.addItem(NSMenuItem.separator())
+            menu.addItem(withTitle: "断开连接", action: #selector(unpair), keyEquivalent: "")
+            let deleteItem = menu.addItem(withTitle: "删除好友…", action: #selector(removeCurrentFriend), keyEquivalent: "")
+            deleteItem.attributedTitle = NSAttributedString(
+                string: "删除好友…",
+                attributes: [.foregroundColor: NSColor.systemRed]
+            )
         } else {
-            let hint = NSMenuItem(title: "配对后可发送互动", action: nil, keyEquivalent: "")
+            let hint = NSMenuItem(title: "选择好友或添加新好友", action: nil, keyEquivalent: "")
             hint.isEnabled = false
             menu.addItem(hint)
         }
@@ -199,6 +202,10 @@ final class PetView: NSView {
     @objc private func hidePet() { onHide?() }
     @objc private func quitApp() { onQuit?() }
     @objc private func unpair() { onUnpair?() }
+    @objc private func removeCurrentFriend() {
+        guard let friend = confirmedFriend else { return }
+        onRemoveFriend?(friend)
+    }
 
     @objc private func pairPeer(_ sender: NSMenuItem) {
         guard let id = sender.representedObject as? String,

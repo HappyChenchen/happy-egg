@@ -17,6 +17,7 @@ final class PetPanelController {
         onCreatePublicPairing: @escaping () -> Void,
         onJoinPublicPairing: @escaping () -> Void,
         onSelectFriend: @escaping (PetPeer) -> Void,
+        onRemoveFriend: @escaping (PetPeer) -> Void,
         onEditProfile: @escaping () -> Void
     ) {
         petView = PetView(frame: NSRect(x: 0, y: 0, width: 220, height: 250))
@@ -30,6 +31,7 @@ final class PetPanelController {
         petView.onCreatePublicPairing = onCreatePublicPairing
         petView.onJoinPublicPairing = onJoinPublicPairing
         petView.onSelectFriend = onSelectFriend
+        petView.onRemoveFriend = onRemoveFriend
         petView.onEditProfile = onEditProfile
         panel = NSPanel(
             contentRect: NSRect(x: 140, y: 140, width: 220, height: 250),
