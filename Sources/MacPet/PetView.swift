@@ -13,12 +13,9 @@ final class PetView: NSView {
     var onSendAction: ((PetEvent.Kind) -> Void)?
     var onHide: (() -> Void)?
     var onQuit: (() -> Void)?
-    var onPair: ((PetPeer) -> Void)?
-    var onUnpair: (() -> Void)?
     var onScaleChange: ((PetScale) -> Void)?
     var onCreatePublicPairing: (() -> Void)?
     var onJoinPublicPairing: (() -> Void)?
-    var nearbyPeers: [PetPeer] = []
     var friends: [PetPeer] = []
     var onlineFriendPeerIDs: Set<String> = []
     var onSelectFriend: ((PetPeer) -> Void)?
@@ -146,8 +143,6 @@ final class PetView: NSView {
                 unavailableItem.isEnabled = false
                 menu.addItem(unavailableItem)
             }
-            menu.addItem(NSMenuItem.separator())
-            menu.addItem(withTitle: "断开连接", action: #selector(unpair), keyEquivalent: "")
         } else {
             let hint = NSMenuItem(title: "选择好友或添加新好友", action: nil, keyEquivalent: "")
             hint.isEnabled = false
@@ -214,14 +209,7 @@ final class PetView: NSView {
     @objc private func celebrate() { onSendAction?(.celebrate) }
     @objc private func hidePet() { onHide?() }
     @objc private func quitApp() { onQuit?() }
-    @objc private func unpair() { onUnpair?() }
     @objc private func removeFriend() { onRemoveFriend?() }
-
-    @objc private func pairPeer(_ sender: NSMenuItem) {
-        guard let id = sender.representedObject as? String,
-              let peer = nearbyPeers.first(where: { $0.id == id }) else { return }
-        onPair?(peer)
-    }
 
     @objc private func changeScale(_ sender: NSMenuItem) {
         let scales = PetScale.allCases

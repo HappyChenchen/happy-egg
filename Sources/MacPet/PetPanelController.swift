@@ -11,8 +11,6 @@ final class PetPanelController {
         onSendAction: @escaping (PetEvent.Kind) -> Void,
         onHide: @escaping () -> Void,
         onQuit: @escaping () -> Void,
-        onPair: @escaping (PetPeer) -> Void,
-        onUnpair: @escaping () -> Void,
         onScaleChange: @escaping (PetScale) -> Void,
         onCreatePublicPairing: @escaping () -> Void,
         onJoinPublicPairing: @escaping () -> Void,
@@ -25,8 +23,6 @@ final class PetPanelController {
         petView.onSendAction = onSendAction
         petView.onHide = onHide
         petView.onQuit = onQuit
-        petView.onPair = onPair
-        petView.onUnpair = onUnpair
         petView.onScaleChange = onScaleChange
         petView.onCreatePublicPairing = onCreatePublicPairing
         petView.onJoinPublicPairing = onJoinPublicPairing
@@ -51,8 +47,7 @@ final class PetPanelController {
     func show() { panel.orderFrontRegardless() }
     func hide() { panel.orderOut(nil) }
     func setOrigin(_ origin: NSPoint) { panel.setFrameOrigin(origin) }
-    func render(text: String?, emotion: AppModel.Emotion, frameName: String, petName: String, peers: [PetPeer], friends: [PetPeer], onlineFriendPeerIDs: Set<String>, pairedFriend: PetPeer?) {
-        petView.nearbyPeers = peers
+    func render(text: String?, emotion: AppModel.Emotion, frameName: String, petName: String, friends: [PetPeer], onlineFriendPeerIDs: Set<String>, pairedFriend: PetPeer?) {
         petView.friends = friends
         petView.onlineFriendPeerIDs = onlineFriendPeerIDs
         petView.pairedFriend = pairedFriend

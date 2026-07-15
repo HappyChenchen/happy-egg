@@ -7,7 +7,7 @@
     <key>CFBundleExecutable</key>
     <string>MacPet</string>
     <key>CFBundleIdentifier</key>
-    <string>com.macpet.prototype</string>
+    <string>io.happypuppy.macpet</string>
     <key>CFBundleName</key>
     <string>MacPet</string>
     <key>CFBundlePackageType</key>

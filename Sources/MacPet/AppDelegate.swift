@@ -33,10 +33,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.hidePet()
         } onQuit: {
             NSApplication.shared.terminate(nil)
-        } onPair: { [weak self] peer in
-            self?.model.pair(with: peer)
-        } onUnpair: { [weak self] in
-            self?.model.unpair()
         } onScaleChange: { [weak self] scale in
             self?.model.setPetScale(scale)
         } onCreatePublicPairing: { [weak self] in
@@ -52,13 +48,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         panelController.setOrigin(panelOrigin())
         model.onStateChange = { [weak self] in self?.renderPet(); self?.updateProfileMenuItem() }
-        model.onPeersChange = { [weak self] in self?.updateMenuState(); self?.renderPet() }
+        model.onSocialStateChange = { [weak self] in self?.updateMenuState(); self?.renderPet() }
         model.onScaleChange = { [weak self] in self?.panelController.setPetScale(self?.model.petScale ?? .normal) }
         renderPet()
         panelController.setPetScale(model.petScale)
         showPet()
         model.startListening()
-        model.startRefreshingPeers()
         configureMenuBar()
     }
 
@@ -109,7 +104,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             emotion: model.emotion,
             frameName: model.activeFrameName,
             petName: model.petName,
-            peers: model.nearbyPeers,
             friends: model.friends,
             onlineFriendPeerIDs: model.onlineFriendPeerIDs,
             pairedFriend: model.pairedFriend
@@ -132,7 +126,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         alert.accessoryView = stack
         alert.addButton(withTitle: "保存")
         alert.addButton(withTitle: "取消")
-        if alert.runModal() == .alertFirstButtonReturn { model.setProfile(owner: model.ownerName, pet: pet.stringValue) }
+        if alert.runModal() == .alertFirstButtonReturn { model.setPetName(pet.stringValue) }
     }
 
     private func promptForPairingCode() {

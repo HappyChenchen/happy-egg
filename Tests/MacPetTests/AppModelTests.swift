@@ -59,8 +59,8 @@ final class AppModelTests: XCTestCase {
         let defaultsA = AppModel.launchDefaults(arguments: ["MacPet", "--instance", instanceA])
         let defaultsB = AppModel.launchDefaults(arguments: ["MacPet", "--instance", instanceB])
         defer {
-            defaultsA.removePersistentDomain(forName: "com.macpet.prototype.instance.\(instanceA.lowercased())")
-            defaultsB.removePersistentDomain(forName: "com.macpet.prototype.instance.\(instanceB.lowercased())")
+            defaultsA.removePersistentDomain(forName: "io.happypuppy.macpet.instance.\(instanceA.lowercased())")
+            defaultsB.removePersistentDomain(forName: "io.happypuppy.macpet.instance.\(instanceB.lowercased())")
         }
 
         defaultsA.set("小A", forKey: "com.macpet.pet-name")
@@ -71,22 +71,31 @@ final class AppModelTests: XCTestCase {
         XCTAssertNotEqual(modelA.petName, modelB.petName)
     }
 
+    func testLegacyInstanceDefaultsMigrateToProductionSuite() {
+        let instanceID = "migration-\(UUID().uuidString.prefix(8))".lowercased()
+        let legacySuiteName = "com.macpet.prototype.instance.\(instanceID)"
+        let productionSuiteName = "io.happypuppy.macpet.instance.\(instanceID)"
+        let legacyDefaults = UserDefaults(suiteName: legacySuiteName)!
+        let productionDefaults = UserDefaults(suiteName: productionSuiteName)!
+        defer {
+            legacyDefaults.removePersistentDomain(forName: legacySuiteName)
+            productionDefaults.removePersistentDomain(forName: productionSuiteName)
+        }
+        legacyDefaults.set("旧名字", forKey: "com.macpet.pet-name")
+
+        let migrated = AppModel.launchDefaults(arguments: ["MacPet", "--instance", instanceID])
+
+        XCTAssertEqual(migrated.string(forKey: "com.macpet.pet-name"), "旧名字")
+    }
+
     func testInstanceLaunchArgumentIsNormalized() {
         XCTAssertEqual(AppModel.launchInstanceID(arguments: ["MacPet", "--instance", "A"]), "a")
         XCTAssertNil(AppModel.launchInstanceID(arguments: ["MacPet", "--instance", "bad id"]))
     }
 
-    func testDirectoryReturnsNamedPeer() async {
-        let service = LocalPetInteractionService()
-        let alice = PetPeer(id: "alice-device", name: "Alice")
-        await service.setPeers([alice])
-        let peers = await service.availablePeers()
-        XCTAssertEqual(peers, [alice])
-    }
-
-    func testPairingStoresFriendName() {
+    func testSelectingFriendStoresFriendName() async {
         let model = AppModel(service: LocalPetInteractionService())
-        model.pair(with: PetPeer(id: "alice-device", name: "Alice"))
+        await model.selectFriend(PetPeer(id: "alice-device", name: "Alice"))
         XCTAssertEqual(model.pairedFriend?.name, "Alice")
     }
 
@@ -123,7 +132,7 @@ final class AppModelTests: XCTestCase {
         defaults.set(try JSONEncoder().encode([friend]), forKey: "com.macpet.friends")
         let service = LocalPetInteractionService(responseDelay: .seconds(10))
         let model = AppModel(service: service, defaults: defaults)
-        model.pair(with: friend)
+        await model.selectFriend(friend)
         model.startListening()
         await Task.yield()
         await service.simulatePresenceSnapshot(onlinePeerIDs: [stableID])
@@ -147,7 +156,7 @@ final class AppModelTests: XCTestCase {
         defaults.set(try JSONEncoder().encode([friend]), forKey: "com.macpet.friends")
         let service = LocalPetInteractionService(responseDelay: .zero)
         let model = AppModel(service: service, defaults: defaults)
-        model.pair(with: friend)
+        await model.selectFriend(friend)
 
         await model.sendInteraction(kind: .poke)
 
@@ -195,7 +204,7 @@ final class AppModelTests: XCTestCase {
     func testPeerRenameUpdatesFriendNameAndShowsNotice() async throws {
         let service = LocalPetInteractionService(responseDelay: .zero)
         let model = AppModel(service: service)
-        model.pair(with: PetPeer(id: "alice-device", name: "Alice"))
+        await model.selectFriend(PetPeer(id: "alice-device", name: "Alice"))
         model.startListening()
         await Task.yield()
         await service.simulatePeerRenamed(to: "阿梨")
@@ -207,7 +216,7 @@ final class AppModelTests: XCTestCase {
     func testPeerUnavailableKeepsFriendAndShowsReconnectNotice() async throws {
         let service = LocalPetInteractionService(responseDelay: .zero)
         let model = AppModel(service: service)
-        model.pair(with: PetPeer(id: "alice-device", name: "Alice"))
+        await model.selectFriend(PetPeer(id: "alice-device", name: "Alice"))
         model.startListening()
         await Task.yield()
         await service.simulatePeerUnavailable()
@@ -266,7 +275,7 @@ final class AppModelTests: XCTestCase {
         defaults.set(try JSONEncoder().encode([friend]), forKey: "com.macpet.friends")
         let service = LocalPetInteractionService(responseDelay: .zero)
         let model = AppModel(service: service, defaults: defaults)
-        model.pair(with: friend)
+        await model.selectFriend(friend)
         model.startListening()
         await Task.yield()
         await service.simulatePresenceSnapshot(onlinePeerIDs: [stableID])
@@ -288,12 +297,12 @@ final class AppModelTests: XCTestCase {
         defer { defaults.removePersistentDomain(forName: suiteName) }
         let service = LocalPetInteractionService(responseDelay: .zero)
         let model = AppModel(service: service, defaults: defaults)
-        model.pair(with: PetPeer(id: "old-room", name: "陈开心"))
+        await model.selectFriend(PetPeer(id: "old-room", name: "陈开心"))
         model.startListening()
         await Task.yield()
         await service.simulatePeerAvailable(name: "陈开心")
         try await Task.sleep(for: .milliseconds(20))
-        model.pair(with: PetPeer(id: "new-room", name: "陈开心"))
+        await model.selectFriend(PetPeer(id: "new-room", name: "陈开心"))
         await service.simulatePeerAvailable(name: "陈开心")
         try await Task.sleep(for: .milliseconds(20))
 
@@ -322,7 +331,7 @@ final class AppModelTests: XCTestCase {
         defaults.set("我的宠物", forKey: "com.macpet.pet-name")
         let service = LocalPetInteractionService(responseDelay: .zero)
         let model = AppModel(service: service, defaults: defaults)
-        model.pair(with: PetPeer(id: "same-room", name: "正在加入配对"))
+        await model.joinPublicPairing(code: "abcd2345")
         model.startListening()
         await Task.yield()
         await service.simulatePeerAvailable(name: "我的宠物", peerID: model.peerID)
@@ -349,17 +358,16 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(model.friends, [PetPeer(id: "friend-room", name: "朋友")])
     }
 
-    func testProfileChangeBroadcastsWhenAlreadyPaired() async throws {
+    func testPetNameChangeBroadcastsWhenAlreadyPaired() async throws {
         let service = LocalPetInteractionService(responseDelay: .zero)
         let suiteName = "MacPetTests.Profile.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!
         defer { defaults.removePersistentDomain(forName: suiteName) }
         let model = AppModel(service: service, defaults: defaults)
-        model.pair(with: PetPeer(id: "alice-device", name: "Alice"))
-        model.setProfile(owner: " 我 ", pet: " 小蛋 ")
+        await model.selectFriend(PetPeer(id: "alice-device", name: "Alice"))
+        model.setPetName(" 小蛋 ")
         try await Task.sleep(for: .milliseconds(20))
         let updatedNames = await service.updatedNameValues()
-        XCTAssertEqual(model.ownerName, "我")
         XCTAssertEqual(model.petName, "小蛋")
         XCTAssertEqual(updatedNames, ["小蛋"])
         XCTAssertEqual(model.bubbleText, "名字已更新，朋友会看到")

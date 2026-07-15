@@ -11,7 +11,6 @@ enum PetConnectionUpdate: Equatable, Sendable {
 }
 
 protocol PetInteractionService: Sendable {
-    func availablePeers() async -> [PetPeer]
     func pair(room: String, name: String, peerID: String) async
     func stop() async
     func updateName(_ name: String) async
@@ -28,7 +27,6 @@ actor LocalPetInteractionService: PetInteractionService {
     private let connectionStream: AsyncStream<PetConnectionUpdate>
     private let connectionContinuation: AsyncStream<PetConnectionUpdate>.Continuation
     private let responseDelay: Duration
-    private var peers: [PetPeer] = []
     private var updatedNames: [String] = []
     private var presenceSubscriptions: [Set<String>] = []
     private var sentTargets: [String] = []
@@ -49,10 +47,6 @@ actor LocalPetInteractionService: PetInteractionService {
     }
     func connectionUpdates() async -> AsyncStream<PetConnectionUpdate> { connectionStream }
 
-    func availablePeers() async -> [PetPeer] {
-        peers
-    }
-
     func pair(room: String, name: String, peerID: String) async { pairedRooms.append(room) }
     func stop() async {}
     func updateName(_ name: String) async { updatedNames.append(name) }
@@ -65,15 +59,10 @@ actor LocalPetInteractionService: PetInteractionService {
     func sentTargetValues() -> [String] { sentTargets }
     func pairedRoomValues() -> [String] { pairedRooms }
 
-    func setPeers(_ peers: [PetPeer]) {
-        self.peers = peers
-    }
-
     func send(_ event: PetEvent, to peerID: String) async {
         sentTargets.append(peerID)
         try? await Task.sleep(for: responseDelay)
-        let friendName = peers.first(where: { $0.id == peerID })?.name ?? "朋友"
-        continuation.yield(PetEvent(kind: event.kind, senderName: friendName, frameName: event.frameName))
+        continuation.yield(PetEvent(kind: event.kind, senderName: "朋友", frameName: event.frameName))
     }
 
     func simulateIncomingPoke(from name: String) {
@@ -138,8 +127,6 @@ final class PublicPetInteractionService: @unchecked Sendable, PetInteractionServ
         continuation.finish()
         connectionContinuation.finish()
     }
-
-    func availablePeers() async -> [PetPeer] { [] }
 
     func incomingEvents() async -> AsyncStream<PetEvent> { stream }
     func connectionUpdates() async -> AsyncStream<PetConnectionUpdate> { connectionStream }
