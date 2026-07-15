@@ -70,13 +70,32 @@ final class PetView: NSView {
             friendsMenu.addItem(empty)
         } else {
             for friend in friends {
-                let status: String
+                let statusText: String
+                let statusColor: NSColor
                 if let peerID = friend.peerID?.lowercased() {
-                    status = onlineFriendPeerIDs.contains(peerID) ? "🟢 \(friend.name) · 在线" : "⚪️ \(friend.name) · 离线"
+                    let isOnline = onlineFriendPeerIDs.contains(peerID)
+                    statusText = isOnline ? "在线" : "离线"
+                    statusColor = isOnline ? .systemGreen : .tertiaryLabelColor
                 } else {
-                    status = "◌ \(friend.name) · 状态未知"
+                    statusText = "状态未知"
+                    statusColor = .tertiaryLabelColor
                 }
-                let item = NSMenuItem(title: status, action: #selector(selectFriend(_:)), keyEquivalent: "")
+                let item = NSMenuItem(title: "", action: #selector(selectFriend(_:)), keyEquivalent: "")
+                let title = NSMutableAttributedString(
+                    string: "●  ",
+                    attributes: [
+                        .font: NSFont.systemFont(ofSize: 7, weight: .bold),
+                        .foregroundColor: statusColor
+                    ]
+                )
+                title.append(NSAttributedString(
+                    string: "\(friend.name) · \(statusText)",
+                    attributes: [
+                        .font: NSFont.systemFont(ofSize: 13),
+                        .foregroundColor: NSColor.labelColor
+                    ]
+                ))
+                item.attributedTitle = title
                 item.representedObject = friend.id
                 item.target = self
                 friendsMenu.addItem(item)
