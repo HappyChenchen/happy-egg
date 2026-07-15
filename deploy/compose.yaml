@@ -2,8 +2,19 @@ services:
   relay:
     build: ../relay
     restart: unless-stopped
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp
     expose:
       - "8080"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
   caddy:
     image: caddy:2
     restart: unless-stopped
@@ -16,7 +27,8 @@ services:
       - caddy_data:/data
       - caddy_config:/config
     depends_on:
-      - relay
+      relay:
+        condition: service_healthy
 volumes:
   caddy_data:
   caddy_config:

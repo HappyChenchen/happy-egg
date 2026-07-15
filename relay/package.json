@@ -1,8 +1,12 @@
 {
   "name": "macpet-relay",
   "version": "0.1.0",
+  "description": "Ephemeral WebSocket relay for MacPet pairing, presence, and friend interactions.",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "start": "node server.mjs",
     "test": "node --test"

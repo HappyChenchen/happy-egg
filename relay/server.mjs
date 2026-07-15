@@ -273,6 +273,18 @@ export function createRelayServer({ pairingTTL = 10 * 60_000 } = {}) {
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   const relay = createRelayServer();
-  await relay.listen(Number(process.env.PORT ?? 8080));
-  console.log('MacPet relay listening on port 8080');
+  const port = Number(process.env.PORT ?? 8080);
+  await relay.listen(port);
+  console.log(`MacPet relay listening on port ${port}`);
+
+  let shuttingDown = false;
+  const shutdown = async (signal) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log(`Received ${signal}; shutting down`);
+    await relay.close();
+  };
+
+  process.once('SIGINT', () => void shutdown('SIGINT'));
+  process.once('SIGTERM', () => void shutdown('SIGTERM'));
 }

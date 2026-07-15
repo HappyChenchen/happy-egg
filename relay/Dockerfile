@@ -1,8 +1,9 @@
 FROM node:22-alpine
 WORKDIR /app
+ENV NODE_ENV=production
 COPY package*.json ./
-RUN npm ci --omit=dev
-COPY server.mjs ./
+RUN npm ci --omit=dev && npm cache clean --force
+COPY --chown=node:node server.mjs ./
 EXPOSE 8080
 USER node
-CMD ["npm", "start"]
+CMD ["node", "server.mjs"]

@@ -24,6 +24,18 @@ function nextMessageWithin(socket, timeout = 300) {
   ]);
 }
 
+test('serves a JSON health response', async (context) => {
+  const relay = createRelayServer();
+  const address = await relay.listen(0, '127.0.0.1');
+  context.after(async () => relay.close());
+
+  const response = await fetch(`http://127.0.0.1:${address.port}/health`);
+
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('content-type'), 'application/json');
+  assert.deepEqual(await response.json(), { ok: true });
+});
+
 test('forwards an event only to the other socket in the room', async (context) => {
   const relay = createRelayServer();
   const address = await relay.listen(0, '127.0.0.1');
@@ -222,4 +234,28 @@ test('rejects invalid presence subscriptions', async (context) => {
 
   alice.send(JSON.stringify({ type: 'presence-register', peerID: 'not-a-profile', name: 'Alice', friendPeerIDs: [] }));
   assert.deepEqual(await nextMessage(alice), { type: 'error', message: 'invalid presence' });
+});
+
+test('rate limits repeated presence updates', async (context) => {
+  const relay = createRelayServer();
+  const address = await relay.listen(0, '127.0.0.1');
+  context.after(async () => relay.close());
+  const alice = await connect(`ws://127.0.0.1:${address.port}/ws`);
+  context.after(() => alice.close());
+  const registration = {
+    type: 'presence-register',
+    peerID: 'a'.repeat(32),
+    name: 'Alice',
+    friendPeerIDs: []
+  };
+
+  alice.send(JSON.stringify(registration));
+  assert.deepEqual(await nextMessage(alice), { type: 'presence-snapshot', onlinePeerIDs: [] });
+  for (let index = 0; index < 20; index += 1) {
+    alice.send(JSON.stringify(registration));
+    assert.deepEqual(await nextMessage(alice), { type: 'presence-snapshot', onlinePeerIDs: [] });
+  }
+
+  alice.send(JSON.stringify(registration));
+  assert.deepEqual(await nextMessage(alice), { type: 'error', message: 'rate limit' });
 });
