@@ -4,6 +4,17 @@ import XCTest
 
 @MainActor
 final class PetViewTests: XCTestCase {
+    func testDefaultSingleClickRespondsWithinThreeTenthsOfASecond() async throws {
+        let view = PetView(frame: NSRect(x: 0, y: 0, width: 220, height: 250))
+        let responded = expectation(description: "Single click responds quickly")
+        view.onLocalInteraction = { _ in responded.fulfill() }
+
+        view.mouseDown(with: try mouseEvent(type: .leftMouseDown, clickCount: 1))
+        view.mouseUp(with: try mouseEvent(type: .leftMouseUp, clickCount: 1))
+
+        await fulfillment(of: [responded], timeout: 0.3)
+    }
+
     func testSingleClickRunsOnlyLocalInteractionAfterDoubleClickWindow() async throws {
         let view = PetView(
             frame: NSRect(x: 0, y: 0, width: 220, height: 250),

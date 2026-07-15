@@ -1,6 +1,7 @@
 import AppKit
 
 final class PetView: NSView {
+    private static let defaultSingleClickDelay: TimeInterval = 0.22
     private static let imageBundle: Bundle = {
         if let url = Bundle.main.url(forResource: "MacPet_MacPet", withExtension: "bundle"),
            let bundle = Bundle(url: url) {
@@ -33,13 +34,13 @@ final class PetView: NSView {
     private var mouseDownLocation: NSPoint?
     private var didDrag = false
 
-    init(frame frameRect: NSRect, singleClickDelay: TimeInterval = NSEvent.doubleClickInterval) {
+    init(frame frameRect: NSRect, singleClickDelay: TimeInterval = PetView.defaultSingleClickDelay) {
         self.singleClickDelay = singleClickDelay
         super.init(frame: frameRect)
     }
 
     required init?(coder: NSCoder) {
-        singleClickDelay = NSEvent.doubleClickInterval
+        singleClickDelay = Self.defaultSingleClickDelay
         super.init(coder: coder)
     }
 
