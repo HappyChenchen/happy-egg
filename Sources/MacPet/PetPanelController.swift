@@ -7,7 +7,7 @@ final class PetPanelController {
     private let petView: PetView
 
     init(
-        onPoke: @escaping (String) -> Void,
+        onLocalInteraction: @escaping (String) -> Void,
         onSendAction: @escaping (PetEvent.Kind) -> Void,
         onHide: @escaping () -> Void,
         onQuit: @escaping () -> Void,
@@ -19,7 +19,7 @@ final class PetPanelController {
         onEditProfile: @escaping () -> Void
     ) {
         petView = PetView(frame: NSRect(x: 0, y: 0, width: 220, height: 250))
-        petView.onPoke = onPoke
+        petView.onLocalInteraction = onLocalInteraction
         petView.onSendAction = onSendAction
         petView.onHide = onHide
         petView.onQuit = onQuit

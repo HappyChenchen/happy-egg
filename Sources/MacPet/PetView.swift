@@ -9,7 +9,7 @@ final class PetView: NSView {
         return .module
     }()
 
-    var onPoke: ((String) -> Void)?
+    var onLocalInteraction: ((String) -> Void)?
     var onSendAction: ((PetEvent.Kind) -> Void)?
     var onHide: (() -> Void)?
     var onQuit: (() -> Void)?
@@ -28,6 +28,20 @@ final class PetView: NSView {
     private var frameIndex = BuddyFrames.initialIndex
     private var imageCache: [String: NSImage] = [:]
     private var petScale: PetScale = .normal
+    private var pendingSingleClick: DispatchWorkItem?
+    private let singleClickDelay: TimeInterval
+    private var mouseDownLocation: NSPoint?
+    private var didDrag = false
+
+    init(frame frameRect: NSRect, singleClickDelay: TimeInterval = NSEvent.doubleClickInterval) {
+        self.singleClickDelay = singleClickDelay
+        super.init(frame: frameRect)
+    }
+
+    required init?(coder: NSCoder) {
+        singleClickDelay = NSEvent.doubleClickInterval
+        super.init(coder: coder)
+    }
 
     override var isFlipped: Bool { true }
 
@@ -46,9 +60,49 @@ final class PetView: NSView {
     }
 
     override func mouseDown(with event: NSEvent) {
-        frameIndex = BuddyFrames.nextIndex(after: frameIndex)
-        needsDisplay = true
-        onPoke?(BuddyFrames.names[frameIndex])
+        mouseDownLocation = event.locationInWindow
+        didDrag = false
+        guard event.clickCount >= 2 else { return }
+        pendingSingleClick?.cancel()
+        pendingSingleClick = nil
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        if movedBeyondClickThreshold(to: event.locationInWindow) {
+            didDrag = true
+            pendingSingleClick?.cancel()
+            pendingSingleClick = nil
+        }
+        super.mouseDragged(with: event)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        defer {
+            mouseDownLocation = nil
+            didDrag = false
+        }
+        guard !didDrag,
+              !movedBeyondClickThreshold(to: event.locationInWindow) else { return }
+        if event.clickCount == 2 {
+            onSendAction?(.poke)
+            return
+        }
+        guard event.clickCount == 1 else { return }
+        pendingSingleClick?.cancel()
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.frameIndex = BuddyFrames.nextIndex(after: self.frameIndex)
+            self.needsDisplay = true
+            self.onLocalInteraction?(BuddyFrames.names[self.frameIndex])
+            self.pendingSingleClick = nil
+        }
+        pendingSingleClick = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + singleClickDelay, execute: workItem)
+    }
+
+    private func movedBeyondClickThreshold(to location: NSPoint) -> Bool {
+        guard let mouseDownLocation else { return false }
+        return hypot(location.x - mouseDownLocation.x, location.y - mouseDownLocation.y) > 4
     }
 
     override func rightMouseDown(with event: NSEvent) {

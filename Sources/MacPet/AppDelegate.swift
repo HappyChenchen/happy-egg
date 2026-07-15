@@ -26,7 +26,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         panelController = PetPanelController { [weak self] frameName in
-            Task { await self?.model.sendInteraction(kind: .poke, frameName: frameName) }
+            self?.model.interactLocally(frameName: frameName)
         } onSendAction: { [weak self] kind in
             Task { await self?.model.sendInteraction(kind: kind) }
         } onHide: { [weak self] in

@@ -145,6 +145,30 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(model.activeFrameName, "ai_buddy_07")
     }
 
+    func testLocalInteractionNeverSendsToOnlineFriend() async throws {
+        let stableID = String(repeating: "a", count: 32)
+        let friend = PetPeer(id: "alice-room", name: "Alice", peerID: stableID)
+        let suiteName = "MacPetTests.LocalInteraction.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        defaults.set(try JSONEncoder().encode([friend]), forKey: "com.macpet.friends")
+        let service = LocalPetInteractionService(responseDelay: .zero)
+        let model = AppModel(service: service, defaults: defaults)
+        await model.selectFriend(friend)
+        model.startListening()
+        await Task.yield()
+        await service.simulatePresenceSnapshot(onlinePeerIDs: [stableID])
+        try await Task.sleep(for: .milliseconds(20))
+
+        model.interactLocally(frameName: "ai_buddy_07")
+
+        XCTAssertEqual(model.bubbleText, "陈团团开心地回应你")
+        XCTAssertEqual(model.emotion, .happy)
+        XCTAssertEqual(model.activeFrameName, "ai_buddy_07")
+        let sentTargets = await service.sentTargetValues()
+        XCTAssertEqual(sentTargets, [])
+    }
+
     func testPokeTargetsPairedFriendStableIDAndSynchronizesFrame() async throws {
         let suiteName = "MacPetTests.OnlineInteraction.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!

@@ -221,6 +221,11 @@ final class AppModel {
         onScaleChange?()
     }
 
+    func interactLocally(frameName: String) {
+        let safeFrame = BuddyFrames.names.contains(frameName) ? frameName : PetEvent.Kind.poke.defaultFrameName
+        setState(text: "\(petName)开心地回应你", emotion: .happy, frameName: safeFrame)
+    }
+
     func sendInteraction(kind: PetEvent.Kind, frameName: String? = nil) async {
         let selectedFrame = frameName ?? kind.defaultFrameName
         let safeFrame = BuddyFrames.names.contains(selectedFrame) ? selectedFrame : kind.defaultFrameName
