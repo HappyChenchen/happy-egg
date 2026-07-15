@@ -9,7 +9,7 @@ final class AppModel {
 
     private let service: any PetInteractionService
     private static let pairingAlphabet = Array("abcdefghjkmnpqrstuvwxyz23456789")
-    private static let baseDefaultPetName = "团团"
+    private static let baseDefaultPetName = "陈团团"
     private static let legacyDefaultPetName = "我的宠物"
     private var listeningTask: Task<Void, Never>?
     private var peerRefreshTask: Task<Void, Never>?

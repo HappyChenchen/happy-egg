@@ -37,7 +37,7 @@ swift run MacPet
 ./outputs/MacPet.app/Contents/MacOS/MacPet --instance B
 ```
 
-带 `--instance` 的实例会使用独立的宠物资料、好友列表和 profile ID；A 默认叫“团团”，B 默认叫“团团2”；不带参数正常启动时仍使用正式配置。
+带 `--instance` 的实例会使用独立的宠物资料、好友列表和 profile ID；A 默认叫“陈团团”，B 默认叫“团团2”；不带参数正常启动时仍使用正式配置。
 
 ## 两台 Mac 公网配对
 

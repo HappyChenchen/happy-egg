@@ -21,7 +21,7 @@ final class AppModelTests: XCTestCase {
         let defaults = UserDefaults(suiteName: suiteName)!
         defer { defaults.removePersistentDomain(forName: suiteName) }
         let model = AppModel(service: LocalPetInteractionService(), defaults: defaults)
-        XCTAssertEqual(model.petName, "团团")
+        XCTAssertEqual(model.petName, "陈团团")
     }
 
     func testLocalInstanceBUsesNumberedDefaultPetName() {
@@ -38,8 +38,8 @@ final class AppModelTests: XCTestCase {
         defer { defaults.removePersistentDomain(forName: suiteName) }
         defaults.set("我的宠物", forKey: "com.macpet.pet-name")
         let model = AppModel(service: LocalPetInteractionService(), defaults: defaults)
-        XCTAssertEqual(model.petName, "团团")
-        XCTAssertEqual(defaults.string(forKey: "com.macpet.pet-name"), "团团")
+        XCTAssertEqual(model.petName, "陈团团")
+        XCTAssertEqual(defaults.string(forKey: "com.macpet.pet-name"), "陈团团")
     }
 
     func testStableProfileIDPersistsAcrossModelInstances() {
