@@ -120,7 +120,7 @@ function handleMessage(message) {
     const name = message.senderName || remoteName || '宠物';
     const frame = FRAME_NAMES.has(message.frameName) ? message.frameName : 'ai_buddy_05';
     petImage.src = `../Sources/MacPet/Resources/${frame}.png`;
-    petImage.animate([{ transform: 'translateY(0) scale(1)' }, { transform: 'translateY(-8px) scale(1.04)' }, { transform: 'translateY(0) scale(1)' }], { duration: 480, easing: 'cubic-bezier(.2,.8,.2,1)' });
+    petImage.animate([{ opacity: 0.72 }, { opacity: 1 }], { duration: 280, easing: 'ease-out' });
     setMessage(`${name}${incomingText(message.kind)}`);
   }
 }
