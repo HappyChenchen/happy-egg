@@ -19,6 +19,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var pairingStatusItem: NSMenuItem!
     private var interactionItem: NSMenuItem!
     private var profileItem: NSMenuItem!
+    private var friendsItem: NSMenuItem!
+    private var addFriendItem: NSMenuItem!
+    private var removeFriendItem: NSMenuItem!
     private var isPetVisible = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -37,12 +40,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } onScaleChange: { [weak self] scale in
             self?.model.setPetScale(scale)
         } onCreatePublicPairing: { [weak self] in
-            Task {
-                guard let self else { return }
-                let code = await self.model.createPublicPairing()
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(code, forType: .string)
-            }
+            self?.createAndCopyPairingCode()
         } onJoinPublicPairing: { [weak self] in
             self?.promptForPairingCode()
         } onSelectFriend: { [weak self] friend in
@@ -71,10 +69,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         profileItem = menu.addItem(withTitle: "我的宠物：\(model.petName)", action: nil, keyEquivalent: "")
         profileItem.isEnabled = false
         menu.addItem(NSMenuItem.separator())
-        pairingStatusItem = NSMenuItem(title: "公网模式 · 尚未配对", action: nil, keyEquivalent: "")
+        friendsItem = NSMenuItem(title: "好友", action: nil, keyEquivalent: "")
+        menu.addItem(friendsItem)
+        addFriendItem = NSMenuItem(title: "添加好友", action: nil, keyEquivalent: "")
+        menu.addItem(addFriendItem)
+        removeFriendItem = menu.addItem(withTitle: "删除好友…", action: #selector(removeFriendFromMenu), keyEquivalent: "")
+        removeFriendItem.attributedTitle = NSAttributedString(
+            string: "删除好友…",
+            attributes: [.foregroundColor: NSColor.systemRed]
+        )
+        menu.addItem(NSMenuItem.separator())
+        pairingStatusItem = NSMenuItem(title: "尚未选择好友", action: nil, keyEquivalent: "")
         pairingStatusItem.isEnabled = false
         menu.addItem(pairingStatusItem)
-        interactionItem = menu.addItem(withTitle: "请先右键宠物配对", action: #selector(pokeFriend), keyEquivalent: "p")
+        interactionItem = menu.addItem(withTitle: "选择好友后可互动", action: #selector(pokeFriend), keyEquivalent: "p")
         visibilityItem = menu.addItem(withTitle: "隐藏宠物", action: #selector(togglePetVisibility), keyEquivalent: "")
         menu.addItem(NSMenuItem.separator())
         menu.addItem(withTitle: "退出 MacPet", action: #selector(quit), keyEquivalent: "q")
@@ -145,6 +153,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Task { await model.joinPublicPairing(code: input.stringValue) }
     }
 
+    private func createAndCopyPairingCode() {
+        Task {
+            let code = await model.createPublicPairing()
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(code, forType: .string)
+        }
+    }
+
     private func promptToRemoveFriend() {
         guard !model.friends.isEmpty else { return }
         let alert = NSAlert()
@@ -168,24 +184,85 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func pokeFriend() { Task { await model.sendInteraction(kind: .poke) } }
 
+    @objc private func selectStatusFriend(_ sender: NSMenuItem) {
+        guard let friendID = sender.representedObject as? String,
+              let friend = model.friends.first(where: { $0.id == friendID }) else { return }
+        Task { await model.selectFriend(friend) }
+    }
+
+    @objc private func createPairingCodeFromMenu() { createAndCopyPairingCode() }
+    @objc private func joinPairingFromMenu() { promptForPairingCode() }
+    @objc private func removeFriendFromMenu() { promptToRemoveFriend() }
+
     private func updateMenuState() {
+        updateFriendMenus()
         if let friend = model.confirmedFriend {
-            pairingStatusItem?.title = "\(friend.name) · \(model.isFriendOnline(friend) ? "在线" : "离线")"
+            pairingStatusItem?.title = "当前好友：\(friend.name) · \(model.isFriendOnline(friend) ? "在线" : "离线")"
             interactionItem?.title = "拍一拍 \(friend.name)"
             interactionItem?.isEnabled = true
         } else if let code = model.activePairingCode {
-            pairingStatusItem?.title = "配对码 · " + code
-            interactionItem?.title = "等待朋友加入后可互动"
+            pairingStatusItem?.title = "配对码：" + code
+            interactionItem?.title = "等待好友加入"
             interactionItem?.isEnabled = false
         } else if model.pairedFriend?.name == "正在加入配对" {
-            pairingStatusItem?.title = "公网配对 · 正在加入"
-            interactionItem?.title = "等待配对确认"
+            pairingStatusItem?.title = "正在加入好友…"
+            interactionItem?.title = "等待好友确认"
             interactionItem?.isEnabled = false
         } else {
-            pairingStatusItem?.title = "公网模式 · 尚未配对"
-            interactionItem?.title = "请先右键宠物配对"
+            pairingStatusItem?.title = "尚未选择好友"
+            interactionItem?.title = "选择好友后可互动"
             interactionItem?.isEnabled = false
         }
+    }
+
+    private func updateFriendMenus() {
+        let friendsMenu = NSMenu()
+        if model.friends.isEmpty {
+            let emptyItem = NSMenuItem(title: "还没有好友", action: nil, keyEquivalent: "")
+            emptyItem.isEnabled = false
+            friendsMenu.addItem(emptyItem)
+        } else {
+            for friend in model.friends {
+                let online = model.isFriendOnline(friend)
+                let item = NSMenuItem(title: "", action: #selector(selectStatusFriend(_:)), keyEquivalent: "")
+                let title = NSMutableAttributedString(
+                    string: "●  ",
+                    attributes: [
+                        .font: NSFont.systemFont(ofSize: 7, weight: .bold),
+                        .foregroundColor: online ? NSColor.systemGreen : NSColor.tertiaryLabelColor
+                    ]
+                )
+                title.append(NSAttributedString(
+                    string: "\(friend.name) · \(online ? "在线" : "离线")",
+                    attributes: [
+                        .font: NSFont.systemFont(ofSize: 13),
+                        .foregroundColor: NSColor.labelColor
+                    ]
+                ))
+                item.attributedTitle = title
+                item.representedObject = friend.id
+                item.target = self
+                friendsMenu.addItem(item)
+            }
+        }
+        friendsItem?.title = model.friends.isEmpty ? "好友（0）" : "好友（\(model.friends.count)）"
+        friendsItem?.submenu = friendsMenu
+
+        let addFriendMenu = NSMenu()
+        if let code = model.activePairingCode {
+            let codeItem = NSMenuItem(title: "配对码：\(code)", action: nil, keyEquivalent: "")
+            codeItem.isEnabled = false
+            addFriendMenu.addItem(codeItem)
+            addFriendMenu.addItem(NSMenuItem.separator())
+        }
+        let createItem = NSMenuItem(title: "生成配对码", action: #selector(createPairingCodeFromMenu), keyEquivalent: "")
+        createItem.target = self
+        addFriendMenu.addItem(createItem)
+        let joinItem = NSMenuItem(title: "输入配对码…", action: #selector(joinPairingFromMenu), keyEquivalent: "")
+        joinItem.target = self
+        addFriendMenu.addItem(joinItem)
+        addFriendItem?.submenu = addFriendMenu
+        removeFriendItem?.isEnabled = !model.friends.isEmpty
     }
     private func showPet() {
         panelController.show()
