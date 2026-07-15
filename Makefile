@@ -1,5 +1,3 @@
-SHELL := /bin/zsh
-
 .PHONY: help run test test-mac test-relay check-js package web relay deploy-config
 
 help:
