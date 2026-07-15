@@ -1,84 +1,130 @@
 # MacPet
 
-一个 macOS 桌面宠物互动原型。宠物通过 `wss://happypuppy.io/ws` 进行公网配对，不要求两人连接同一 Wi-Fi。
+[![CI](https://github.com/HappyChenchen/happy-egg/actions/workflows/ci.yml/badge.svg)](https://github.com/HappyChenchen/happy-egg/actions/workflows/ci.yml)
+![macOS 14+](https://img.shields.io/badge/macOS-14%2B-111111?logo=apple)
 
-## 运行
+MacPet 是一个支持好友互动的 macOS 桌面宠物。两只宠物通过 `happypuppy.io` 公网 relay 配对，不要求处于同一局域网。
 
-在本目录执行：
+> 项目状态：Beta。核心配对、好友、在线状态和互动链路可用；应用尚未进行 Apple Developer 签名与公证。
+
+## 核心能力
+
+- 原生 AppKit 悬浮宠物，可拖动、缩放、隐藏或退出
+- 8 位短配对码，首次配对后保存为长期好友
+- 双向好友在线状态；一方删除好友后立即停止在线与互动
+- 拍一拍、送爱心、一起庆祝，并同步显示动作素材
+- 每个安装使用独立的稳定宠物 ID，改名不会破坏好友关系
+- 公网 WebSocket relay，带输入校验、房间人数限制和发送频率限制
+- 本地网页联动台，用于演示和调试一次性配对房间
+
+## 快速开始
+
+### 环境要求
+
+- macOS 14 或更高版本
+- Xcode Command Line Tools（仅源码构建需要）
+- Node.js 22 或更高版本（仅 relay 开发需要）
+
+安装命令行工具：
 
 ```sh
-swift run MacPet
+xcode-select --install
 ```
 
-需要 macOS 14+ 与 Xcode Command Line Tools。启动后，菜单栏会出现爪印图标；拖动宠物可移动它。
+### 从源码构建
+
+```sh
+git clone https://github.com/HappyChenchen/happy-egg.git
+cd happy-egg
+make package
+open outputs/MacPet.app
+```
+
+也可以直接运行调试版本：
+
+```sh
+make run
+```
+
+## 配对与互动
+
+1. A 右击宠物，选择“添加好友”→“生成配对码”。
+2. A 把自动复制的 8 位配对码发给 B。
+3. B 选择“添加好友”→“输入配对码…”，输入配对码完成配对。
+4. 双方都保留好友且 MacPet 在线时，好友列表会显示在线并开放互动。
+
+选择好友只会切换当前互动对象，不需要手动建立长期连接。删除好友后需要重新配对才能再次互动。
 
 ## 安装与分发
 
-### 方式一：直接安装 MacPet.app
-
-先在项目目录打包，再把生成的 App 压缩后发给朋友：
+生成 App 和压缩包：
 
 ```sh
-./packaging/package-app.sh
+make package
 ditto -c -k --sequesterRsrc --keepParent outputs/MacPet.app MacPet.zip
 ```
 
-解压后把 `MacPet.app` 放进“应用程序”。当前版本没有 Apple Developer 公证，首次打开可能出现“无法验证开发者”。请只在确认 App 来源可信时执行：
+当前版本使用本地临时签名。若 macOS 首次打开时提示无法验证开发者，请确认文件来源可信，然后执行：
 
 ```sh
 xattr -dr com.apple.quarantine /Applications/MacPet.app
 open /Applications/MacPet.app
 ```
 
-也可以先右击 `MacPet.app` 选择“打开”；如果仍被拦截，再使用上面的命令。
+要实现下载后直接双击，需要使用 Apple Developer 的 Developer ID 证书签名并提交 Apple 公证。
 
-### 方式二：从源码打包
+## 开发
 
-这种方式不需要付费 Apple Developer 账号，但需要安装 Xcode Command Line Tools：
+| 命令 | 说明 |
+| --- | --- |
+| `make run` | 从源码运行 macOS 客户端 |
+| `make test` | 运行 Swift、relay 测试和 JavaScript 语法检查 |
+| `make package` | 生成 `outputs/MacPet.app` |
+| `make web` | 在 `http://localhost:4173/web/` 启动网页联动台 |
+| `make relay` | 在 `http://localhost:8080` 启动本地 relay |
+| `make deploy-config` | 验证 Docker Compose 配置 |
+
+首次运行 relay 测试前安装依赖：
 
 ```sh
-git clone https://github.com/HappyChenchen/happy-egg.git
-cd happy-egg
-./packaging/package-app.sh
-open outputs/MacPet.app
+npm ci --prefix relay
+make test
 ```
 
-如果希望下载后可以直接双击、完全不出现安全提示，需要使用 Apple Developer 的 Developer ID 签名并提交 Apple 公证。
-
-## 当前功能
-
-- 使用 `ai_buddy_assets` 的透明角色素材的桌面宠物窗口
-- 左键宠物发送互动；连续快速点击会循环切换不同动作，接收方同步显示同一素材
-- 右键宠物打开菜单，创建 8 位短配对码或输入配对码加入；双方都保留好友且在线时可拍一拍、送爱心或一起庆祝，也可隐藏或关闭应用
-- 创建配对码后会自动复制到剪贴板，并在菜单栏和右键配对菜单中持续显示；未完成配对的邀请 10 分钟后自动失效
-- 配对成功后会保存为长期好友；之后可在右键“好友”里选择当前互动对象
-- 菜单栏和宠物右键菜单都提供“好友 / 添加好友 / 删除好友”，未连接时也能管理长期好友
-- 好友列表实时显示在线人数，并用 🟢 在线、⚪️ 离线标记每位好友；双方都保留好友且对方的 MacPet 连接着服务器时才显示在线
-- 好友使用稳定 profile ID 识别，改名或更换房间不会误合并不同好友
-- 同名好友重复配对时自动合并，保留最新的配对连接
-- 右键“我的宠物：宠物名”可修改宠物名字；已在线配对时，对方会收到改名提示
-- 右键“宠物大小”可选小（80%）、正常（100%）、大（130%）或超大（160%），选择会被记住
-- 菜单栏操作、显示/隐藏；互动只会发送给当前选择且在线的好友
-- 朋友暂时离线、删除好友或网络中断时会自动更新状态并禁用发送
-
-未配对时，左键仍会播放本地表情和互动气泡；右键发送动作会在配对完成后才出现，同样的点击才会同时发送给朋友。
-
-本地测试两个实例时，可以使用独立配置启动：
+本地同时启动两个隔离实例：
 
 ```sh
+make package
 ./outputs/MacPet.app/Contents/MacOS/MacPet --instance A
 ./outputs/MacPet.app/Contents/MacOS/MacPet --instance B
 ```
 
-带 `--instance` 的实例会使用独立的宠物资料、好友列表和 profile ID；A 默认叫“陈团团”，B 默认叫“团团2”；不带参数正常启动时仍使用正式配置。
+A 默认名为“陈团团”，B 默认名为“团团2”；两者使用独立的宠物资料、好友列表和稳定 ID。
 
-## 两台 Mac 公网配对
+## 仓库结构
 
-1. A 右键宠物 → 添加好友 → 生成配对码，把复制的 8 位代码发给 B。
-2. B 右键宠物 → 添加好友 → 输入配对码，输入这 8 位代码后加入。
-3. 两边完成配对后会自动显示在线；选择当前好友后，点击宠物会向对方发送互动并显示同一张动作素材。
-4. “断开连接”只取消当前选择，不会删除好友；“删除好友…”会清除本地好友记录，之后需要重新配对。
+```text
+Sources/MacPet/        macOS 客户端
+Tests/MacPetTests/     Swift 单元测试
+relay/                 Node.js WebSocket relay 与测试
+web/                   本地网页联动台
+deploy/                Caddy 与 Docker Compose 配置
+packaging/             macOS App 打包脚本和 Info.plist
+docs/                  架构与部署文档
+```
 
-新配对码使用易输入的 8 位字符；旧版 64 位十六进制配对码仍可加入。
+进一步阅读：
 
-`PetInteractionService` 是联机边界；当前默认实现连接 `happypuppy.io` 的 WebSocket relay。
+- [架构与协议](docs/ARCHITECTURE.md)
+- [Relay 部署](docs/DEPLOYMENT.md)
+- [网页联动台](web/README.md)
+- [贡献指南](CONTRIBUTING.md)
+- [安全策略](SECURITY.md)
+
+## 隐私与安全
+
+宠物名字、稳定 ID 和好友列表保存在本机。Relay 只在内存中维护当前连接、临时配对房间和在线关系，不持久化消息内容。当前版本没有账户系统，不能替代高安全等级的身份认证方案；详细边界见 [SECURITY.md](SECURITY.md)。
+
+## 许可证
+
+本仓库目前未声明开源许可证。除非版权所有者另行授权，否则不授予复制、修改或分发代码的权利。
