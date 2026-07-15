@@ -1,4 +1,4 @@
 happypuppy.io {
-  reverse_proxy /ws relay:8080
-  reverse_proxy /health relay:8080
+	reverse_proxy /ws relay:8080
+	reverse_proxy /health relay:8080
 }
