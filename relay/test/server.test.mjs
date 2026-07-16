@@ -87,6 +87,32 @@ test('assigns permanent pet codes and routes an accepted friend request', async 
   });
 });
 
+test('requires the device token after a peer id has been claimed', async (context) => {
+  const registry = new PetRegistry();
+  const relay = createRelayServer({ registry });
+  const address = await relay.listen(0, '127.0.0.1');
+  context.after(async () => relay.close());
+  const url = `ws://127.0.0.1:${address.port}/ws`;
+  const peerID = 'a'.repeat(32);
+  const owner = await connect(url);
+  const registered = nextMessage(owner);
+  owner.send(JSON.stringify({
+    type: 'presence-register', peerID, authToken: '1'.repeat(64), name: 'Alice', friendPeerIDs: []
+  }));
+  assert.equal((await registered).type, 'pet-code');
+  assert.equal(registry.identity(peerID)?.name, 'Alice');
+
+  const impostor = await connect(url);
+  context.after(() => [owner, impostor].forEach((socket) => socket.close()));
+  const rejected = Promise.race([
+    nextMessage(impostor).then((message) => ({ message })),
+    new Promise((resolve) => impostor.once('close', (code, reason) => resolve({ code, reason: reason.toString() })))
+  ]);
+  impostor.send(JSON.stringify({ type: 'presence-register', peerID, name: 'Mallory', friendPeerIDs: [] }));
+
+  assert.deepEqual(await rejected, { message: { type: 'error', message: 'authentication required' } });
+});
+
 test('forwards an event only to the other socket in the room', async (context) => {
   const relay = createRelayServer();
   const address = await relay.listen(0, '127.0.0.1');
@@ -195,7 +221,7 @@ test('propagates stable profile IDs with presence and profile updates', async (c
 });
 
 test('reports online snapshots and realtime friend presence changes', async (context) => {
-  const relay = createRelayServer();
+  const relay = createRelayServer({ presenceOfflineGrace: 0 });
   const address = await relay.listen(0, '127.0.0.1');
   context.after(async () => relay.close());
   const url = `ws://127.0.0.1:${address.port}/ws`;
@@ -215,6 +241,36 @@ test('reports online snapshots and realtime friend presence changes', async (con
   const bobOffline = nextMessage(alice);
   bob.close();
   assert.deepEqual(await bobOffline, { type: 'friend-presence', peerID: bobID, online: false });
+});
+
+test('does not flash offline when a friend reconnects within the grace period', async (context) => {
+  const relay = createRelayServer({ presenceOfflineGrace: 80 });
+  const address = await relay.listen(0, '127.0.0.1');
+  context.after(async () => relay.close());
+  const url = `ws://127.0.0.1:${address.port}/ws`;
+  const [alice, bob] = await Promise.all([connect(url), connect(url)]);
+  context.after(() => [alice, bob].forEach((socket) => socket.close()));
+  const aliceID = 'a'.repeat(32);
+  const bobID = 'b'.repeat(32);
+
+  alice.send(JSON.stringify({ type: 'presence-register', peerID: aliceID, name: 'Alice', friendPeerIDs: [bobID] }));
+  await nextMessage(alice);
+  const bobOnline = nextMessage(alice);
+  bob.send(JSON.stringify({ type: 'presence-register', peerID: bobID, name: 'Bob', friendPeerIDs: [aliceID] }));
+  await nextMessage(bob);
+  await bobOnline;
+
+  const observed = [];
+  alice.on('message', (data) => observed.push(JSON.parse(data.toString())));
+  bob.close();
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  const replacement = await connect(url);
+  context.after(() => replacement.close());
+  replacement.send(JSON.stringify({ type: 'presence-register', peerID: bobID, name: 'Bob', friendPeerIDs: [aliceID] }));
+  await nextMessage(replacement);
+  await new Promise((resolve) => setTimeout(resolve, 100));
+
+  assert.equal(observed.some((message) => message.type === 'friend-presence' && message.peerID === bobID && message.online === false), false);
 });
 
 test('reports a friend online only while both profiles keep each other', async (context) => {
@@ -244,6 +300,29 @@ test('reports a friend online only while both profiles keep each other', async (
   bob.send(JSON.stringify({ type: 'presence-register', peerID: bobID, name: 'Bob', friendPeerIDs: [] }));
   assert.deepEqual(await nextMessage(bob), { type: 'presence-snapshot', onlinePeerIDs: [] });
   assert.deepEqual(await removedByBob, { type: 'friend-presence', peerID: bobID, online: false });
+});
+
+test('notifies mutual friends when a pet name changes', async (context) => {
+  const relay = createRelayServer();
+  const address = await relay.listen(0, '127.0.0.1');
+  context.after(async () => relay.close());
+  const url = `ws://127.0.0.1:${address.port}/ws`;
+  const [alice, bob] = await Promise.all([connect(url), connect(url)]);
+  context.after(() => [alice, bob].forEach((socket) => socket.close()));
+  const aliceID = 'a'.repeat(32);
+  const bobID = 'b'.repeat(32);
+
+  alice.send(JSON.stringify({ type: 'presence-register', peerID: aliceID, name: 'Alice', friendPeerIDs: [bobID] }));
+  await nextMessage(alice);
+  const bobOnline = nextMessageOfType(alice, 'friend-presence');
+  bob.send(JSON.stringify({ type: 'presence-register', peerID: bobID, name: 'Bob', friendPeerIDs: [aliceID] }));
+  await nextMessage(bob);
+  await bobOnline;
+
+  const renamed = nextMessageOfType(alice, 'friend-profile');
+  bob.send(JSON.stringify({ type: 'presence-register', peerID: bobID, name: 'Bobby', friendPeerIDs: [aliceID] }));
+
+  assert.deepEqual(await renamed, { type: 'friend-profile', peerID: bobID, name: 'Bobby' });
 });
 
 test('routes friend events by stable profile ID only for mutual online friends', async (context) => {
@@ -312,7 +391,7 @@ test('routes friend events by stable profile ID only for mutual online friends',
 });
 
 test('removes an unresponsive presence session from friend online state', async (context) => {
-  const relay = createRelayServer({ heartbeatInterval: 15 });
+  const relay = createRelayServer({ heartbeatInterval: 15, presenceOfflineGrace: 0 });
   const address = await relay.listen(0, '127.0.0.1');
   context.after(async () => relay.close());
   const url = `ws://127.0.0.1:${address.port}/ws`;

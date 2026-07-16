@@ -67,3 +67,19 @@ test('persists an accepted friend request until both participants acknowledge it
   assert.equal(registry.acknowledgeRequest({ requestID: request.id, peerID: bobID }), true);
   assert.equal(registry.notificationsFor(bobID).length, 0);
 });
+
+test('uses current pet names when a pending request is accepted', () => {
+  let nextCode = 456789;
+  const registry = new PetRegistry({ randomIntFn: () => nextCode++ });
+  const bobID = 'b'.repeat(32);
+  registry.registerIdentity({ peerID: aliceID, authToken: aliceToken, name: 'Alice' });
+  const bob = registry.registerIdentity({ peerID: bobID, authToken: '2'.repeat(64), name: 'Bob' });
+  const request = registry.createFriendRequest({ fromPeerID: aliceID, targetCode: bob.petCode, fromName: 'Alice' });
+  registry.registerIdentity({ peerID: aliceID, authToken: aliceToken, name: 'Alicia' });
+  registry.registerIdentity({ peerID: bobID, authToken: '2'.repeat(64), name: 'Bobby' });
+
+  const accepted = registry.respondToFriendRequest({ requestID: request.id, responderPeerID: bobID, accept: true });
+
+  assert.equal(accepted.fromName, 'Alicia');
+  assert.equal(accepted.toName, 'Bobby');
+});

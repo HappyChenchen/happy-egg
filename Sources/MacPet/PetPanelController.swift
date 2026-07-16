@@ -12,8 +12,10 @@ final class PetPanelController {
         onHide: @escaping () -> Void,
         onQuit: @escaping () -> Void,
         onScaleChange: @escaping (PetScale) -> Void,
-        onCreatePublicPairing: @escaping () -> Void,
-        onJoinPublicPairing: @escaping () -> Void,
+        onCopyPetCode: @escaping () -> Void,
+        onAddFriend: @escaping () -> Void,
+        onResetPetCode: @escaping () -> Void,
+        onReviewFriendRequest: @escaping (PetFriendRequest) -> Void,
         onSelectFriend: @escaping (PetPeer) -> Void,
         onRemoveFriend: @escaping () -> Void,
         onEditProfile: @escaping () -> Void
@@ -24,8 +26,10 @@ final class PetPanelController {
         petView.onHide = onHide
         petView.onQuit = onQuit
         petView.onScaleChange = onScaleChange
-        petView.onCreatePublicPairing = onCreatePublicPairing
-        petView.onJoinPublicPairing = onJoinPublicPairing
+        petView.onCopyPetCode = onCopyPetCode
+        petView.onAddFriend = onAddFriend
+        petView.onResetPetCode = onResetPetCode
+        petView.onReviewFriendRequest = onReviewFriendRequest
         petView.onSelectFriend = onSelectFriend
         petView.onRemoveFriend = onRemoveFriend
         petView.onEditProfile = onEditProfile
@@ -47,11 +51,13 @@ final class PetPanelController {
     func show() { panel.orderFrontRegardless() }
     func hide() { panel.orderOut(nil) }
     func setOrigin(_ origin: NSPoint) { panel.setFrameOrigin(origin) }
-    func render(text: String?, emotion: AppModel.Emotion, frameName: String, petName: String, friends: [PetPeer], onlineFriendPeerIDs: Set<String>, pairedFriend: PetPeer?) {
+    func render(text: String?, emotion: AppModel.Emotion, frameName: String, petName: String, petCode: String?, pendingFriendRequests: [PetFriendRequest], friends: [PetPeer], onlineFriendPeerIDs: Set<String>, pairedFriend: PetPeer?) {
         petView.friends = friends
         petView.onlineFriendPeerIDs = onlineFriendPeerIDs
         petView.pairedFriend = pairedFriend
         petView.petName = petName
+        petView.petCode = petCode
+        petView.pendingFriendRequests = pendingFriendRequests
         petView.render(text: text, emotion: emotion, frameName: frameName)
     }
 

@@ -41,6 +41,7 @@ function rateLimited(meta) {
 export function createRelayServer({
   pairingTTL = 10 * 60_000,
   heartbeatInterval = 30_000,
+  presenceOfflineGrace = 5_000,
   registry = new PetRegistry({ filePath: process.env.MACPET_REGISTRY_PATH ?? null })
 } = {}) {
   const rooms = new Map();
@@ -48,6 +49,7 @@ export function createRelayServer({
   const roomExpiryTimers = new Map();
   const onlineProfiles = new Map();
   const presenceWatchers = new Map();
+  const presenceOfflineTimers = new Map();
   const server = http.createServer((request, response) => {
     if (request.url === '/health') {
       response.writeHead(200, { 'content-type': 'application/json' });
@@ -111,13 +113,38 @@ export function createRelayServer({
     }
   }
 
+  function notifyProfileName(peerID, name) {
+    for (const watcher of presenceWatchers.get(peerID) ?? []) {
+      const watcherMeta = metadata.get(watcher);
+      if (watcherMeta?.mode !== 'presence' || !profileWatches(peerID, watcherMeta.peerID)) continue;
+      send(watcher, { type: 'friend-profile', peerID, name });
+    }
+  }
+
+  function cancelPresenceOffline(peerID) {
+    const timer = presenceOfflineTimers.get(peerID);
+    if (timer) clearTimeout(timer);
+    presenceOfflineTimers.delete(peerID);
+  }
+
+  function schedulePresenceOffline(peerID) {
+    cancelPresenceOffline(peerID);
+    if (presenceOfflineGrace <= 0) return notifyProfilePresence(peerID);
+    presenceOfflineTimers.set(peerID, setTimeout(() => {
+      presenceOfflineTimers.delete(peerID);
+      if (!onlineProfiles.has(peerID)) notifyProfilePresence(peerID);
+    }, presenceOfflineGrace));
+  }
+
   function leavePresence(socket, meta) {
     removeWatcherSubscriptions(socket, meta.watchedPeerIDs);
     const sessions = onlineProfiles.get(meta.peerID);
     sessions?.delete(socket);
-    if (sessions?.size === 0) onlineProfiles.delete(meta.peerID);
+    if (sessions?.size === 0) {
+      onlineProfiles.delete(meta.peerID);
+      schedulePresenceOffline(meta.peerID);
+    }
     metadata.delete(socket);
-    notifyProfilePresence(meta.peerID);
   }
 
   function leave(socket) {
@@ -186,6 +213,7 @@ export function createRelayServer({
       return reject(socket, 'invalid presence');
     }
     const peerID = message.peerID.toLowerCase();
+    const previousIdentityName = registry.identity(peerID)?.name ?? null;
     let identity = null;
     if (message.authToken !== undefined) {
       try {
@@ -193,11 +221,20 @@ export function createRelayServer({
       } catch (error) {
         return reject(socket, error instanceof RegistryError ? error.message : 'identity registration failed');
       }
+    } else if (previousIdentityName != null) {
+      return reject(socket, 'authentication required');
     }
     const watchedPeerIDs = new Set(message.friendPeerIDs.map((friendID) => friendID.toLowerCase()).filter((friendID) => friendID !== peerID));
     const existing = metadata.get(socket);
+    const updatesExistingSession = existing?.mode === 'presence' && existing.peerID === peerID;
+    const relationshipChanged = !updatesExistingSession
+      || existing.watchedPeerIDs.size !== watchedPeerIDs.size
+      || [...existing.watchedPeerIDs].some((friendID) => !watchedPeerIDs.has(friendID));
+    const previousName = existing?.mode === 'presence' && existing.peerID === peerID
+      ? existing.name
+      : previousIdentityName;
 
-    if (existing?.mode === 'presence' && existing.peerID === peerID) {
+    if (updatesExistingSession) {
       if (rateLimited(existing)) return reject(socket, 'rate limit');
       removeWatcherSubscriptions(socket, existing.watchedPeerIDs);
       existing.name = message.name.trim();
@@ -205,6 +242,7 @@ export function createRelayServer({
       existing.authenticated = identity != null;
     } else {
       leave(socket);
+      cancelPresenceOffline(peerID);
       const sessions = onlineProfiles.get(peerID) ?? new Set();
       sessions.add(socket);
       onlineProfiles.set(peerID, sessions);
@@ -218,7 +256,8 @@ export function createRelayServer({
       watchers.add(socket);
       presenceWatchers.set(friendID, watchers);
     }
-    notifyProfilePresence(peerID);
+    if (relationshipChanged) notifyProfilePresence(peerID);
+    if (previousName && previousName !== message.name.trim()) notifyProfileName(peerID, message.name.trim());
     const onlinePeerIDs = [...watchedPeerIDs].filter((friendID) =>
       onlineProfiles.has(friendID) && profileWatches(friendID, peerID)
     );
@@ -419,6 +458,8 @@ export function createRelayServer({
       if (heartbeatTimer) clearInterval(heartbeatTimer);
       for (const timer of roomExpiryTimers.values()) clearTimeout(timer);
       roomExpiryTimers.clear();
+      for (const timer of presenceOfflineTimers.values()) clearTimeout(timer);
+      presenceOfflineTimers.clear();
       for (const socket of wss.clients) socket.terminate();
       await new Promise((resolve) => server.close(resolve));
     }

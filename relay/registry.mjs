@@ -107,6 +107,8 @@ export class PetRegistry {
     if (!request || request.status !== 'pending' || request.toPeerID !== normalizedResponder) {
       throw new RegistryError('request-not-found', 'friend request not found');
     }
+    request.fromName = this.state.identities[request.fromPeerID]?.name ?? request.fromName;
+    request.toName = this.state.identities[request.toPeerID]?.name ?? request.toName;
     request.status = accept ? 'accepted' : 'rejected';
     request.respondedAt = this.now();
     request.deliveredTo = [];

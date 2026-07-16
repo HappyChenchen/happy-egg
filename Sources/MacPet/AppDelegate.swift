@@ -35,10 +35,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NSApplication.shared.terminate(nil)
         } onScaleChange: { [weak self] scale in
             self?.model.setPetScale(scale)
-        } onCreatePublicPairing: { [weak self] in
-            self?.createAndCopyPairingCode()
-        } onJoinPublicPairing: { [weak self] in
-            self?.promptForPairingCode()
+        } onCopyPetCode: { [weak self] in
+            self?.copyPetCode()
+        } onAddFriend: { [weak self] in
+            self?.promptForPetCode()
+        } onResetPetCode: { [weak self] in
+            self?.confirmResetPetCode()
+        } onReviewFriendRequest: { [weak self] request in
+            self?.reviewFriendRequest(request)
         } onSelectFriend: { [weak self] friend in
             Task { await self?.model.selectFriend(friend) }
         } onRemoveFriend: { [weak self] in
@@ -104,6 +108,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             emotion: model.emotion,
             frameName: model.activeFrameName,
             petName: model.petName,
+            petCode: model.petCode,
+            pendingFriendRequests: model.pendingFriendRequests,
             friends: model.friends,
             onlineFriendPeerIDs: model.onlineFriendPeerIDs,
             pairedFriend: model.pairedFriend
@@ -129,30 +135,51 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if alert.runModal() == .alertFirstButtonReturn { model.setPetName(pet.stringValue) }
     }
 
-    private func promptForPairingCode() {
+    private func promptForPetCode() {
         let alert = NSAlert()
-        alert.messageText = "加入配对"
-        alert.informativeText = "输入朋友发来的 4 位数字配对码"
+        alert.messageText = "添加好友"
+        alert.informativeText = "输入朋友的 6 位永久宠物号，对方接受后成为好友"
         let input = NSTextField(string: NSPasteboard.general.string(forType: .string) ?? "")
-        input.placeholderString = "例如 2048"
+        input.placeholderString = "例如 482913"
         input.font = NSFont.monospacedSystemFont(ofSize: 16, weight: .medium)
         input.controlSize = .large
         input.alignment = .center
         input.frame = NSRect(x: 0, y: 0, width: 360, height: 32)
         alert.accessoryView = input
-        alert.addButton(withTitle: "加入")
+        alert.addButton(withTitle: "发送申请")
         alert.addButton(withTitle: "取消")
         alert.window.initialFirstResponder = input
         guard alert.runModal() == .alertFirstButtonReturn else { return }
-        Task { await model.joinPublicPairing(code: input.stringValue) }
+        Task { await model.sendFriendRequest(code: input.stringValue) }
     }
 
-    private func createAndCopyPairingCode() {
-        Task {
-            let code = await model.createPublicPairing()
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(code, forType: .string)
-        }
+    private func copyPetCode() {
+        guard let code = model.petCode else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(code, forType: .string)
+    }
+
+    private func confirmResetPetCode() {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "更换宠物号？"
+        alert.informativeText = "旧宠物号会立即失效，已有好友不会受影响。"
+        alert.addButton(withTitle: "更换")
+        alert.addButton(withTitle: "取消")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        Task { await model.resetPetCode() }
+    }
+
+    private func reviewFriendRequest(_ request: PetFriendRequest) {
+        let alert = NSAlert()
+        alert.messageText = "\(request.senderName) 想添加你为好友"
+        alert.informativeText = "接受后，双方可以看到在线状态并互相互动。"
+        alert.addButton(withTitle: "接受")
+        alert.addButton(withTitle: "拒绝")
+        alert.addButton(withTitle: "稍后")
+        let response = alert.runModal()
+        guard response != .alertThirdButtonReturn else { return }
+        Task { await model.respondToFriendRequest(request, accept: response == .alertFirstButtonReturn) }
     }
 
     private func promptToRemoveFriend() {
@@ -184,8 +211,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Task { await model.selectFriend(friend) }
     }
 
-    @objc private func createPairingCodeFromMenu() { createAndCopyPairingCode() }
-    @objc private func joinPairingFromMenu() { promptForPairingCode() }
+    @objc private func copyPetCodeFromMenu() { copyPetCode() }
+    @objc private func addFriendFromMenu() { promptForPetCode() }
+    @objc private func resetPetCodeFromMenu() { confirmResetPetCode() }
+    @objc private func reviewFriendRequestFromMenu(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String,
+              let request = model.pendingFriendRequests.first(where: { $0.id == id }) else { return }
+        reviewFriendRequest(request)
+    }
     @objc private func removeFriendFromMenu() { promptToRemoveFriend() }
 
     private func updateMenuState() {
@@ -195,14 +228,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             pairingStatusItem?.title = "当前好友：\(friend.name) · \(isOnline ? "在线" : "离线")"
             interactionItem?.title = isOnline ? "拍一拍 \(friend.name)" : "\(friend.name) 不在线"
             interactionItem?.isEnabled = isOnline
-        } else if let code = model.activePairingCode {
-            pairingStatusItem?.title = "配对码：" + code
-            interactionItem?.title = "等待好友加入"
-            interactionItem?.isEnabled = false
-        } else if model.pairedFriend?.name == "正在加入配对" {
-            pairingStatusItem?.title = "正在加入好友…"
-            interactionItem?.title = "等待好友确认"
-            interactionItem?.isEnabled = false
         } else {
             pairingStatusItem?.title = "尚未选择好友"
             interactionItem?.title = "选择好友后可互动"
@@ -244,18 +269,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         friendsItem?.submenu = friendsMenu
 
         let addFriendMenu = NSMenu()
-        if let code = model.activePairingCode {
-            let codeItem = NSMenuItem(title: "配对码：\(code)", action: nil, keyEquivalent: "")
-            codeItem.isEnabled = false
-            addFriendMenu.addItem(codeItem)
+        let codeItem = NSMenuItem(title: "我的宠物号：\(model.petCode ?? "获取中…")", action: nil, keyEquivalent: "")
+        codeItem.isEnabled = false
+        addFriendMenu.addItem(codeItem)
+        let copyItem = NSMenuItem(title: "复制宠物号", action: #selector(copyPetCodeFromMenu), keyEquivalent: "")
+        copyItem.target = self
+        copyItem.isEnabled = model.petCode != nil
+        addFriendMenu.addItem(copyItem)
+        let addItem = NSMenuItem(title: "输入宠物号…", action: #selector(addFriendFromMenu), keyEquivalent: "")
+        addItem.target = self
+        addFriendMenu.addItem(addItem)
+        let resetItem = NSMenuItem(title: "更换宠物号…", action: #selector(resetPetCodeFromMenu), keyEquivalent: "")
+        resetItem.target = self
+        addFriendMenu.addItem(resetItem)
+        if !model.pendingFriendRequests.isEmpty {
             addFriendMenu.addItem(NSMenuItem.separator())
+            let requests = NSMenuItem(title: "好友申请（\(model.pendingFriendRequests.count)）", action: nil, keyEquivalent: "")
+            let requestMenu = NSMenu()
+            for request in model.pendingFriendRequests {
+                let item = NSMenuItem(title: request.senderName, action: #selector(reviewFriendRequestFromMenu(_:)), keyEquivalent: "")
+                item.representedObject = request.id
+                item.target = self
+                requestMenu.addItem(item)
+            }
+            requests.submenu = requestMenu
+            addFriendMenu.addItem(requests)
         }
-        let createItem = NSMenuItem(title: "生成配对码", action: #selector(createPairingCodeFromMenu), keyEquivalent: "")
-        createItem.target = self
-        addFriendMenu.addItem(createItem)
-        let joinItem = NSMenuItem(title: "输入配对码…", action: #selector(joinPairingFromMenu), keyEquivalent: "")
-        joinItem.target = self
-        addFriendMenu.addItem(joinItem)
         addFriendItem?.submenu = addFriendMenu
         removeFriendItem?.isEnabled = !model.friends.isEmpty
     }

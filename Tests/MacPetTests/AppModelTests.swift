@@ -53,6 +53,101 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(first.peerID, second.peerID)
     }
 
+    func testDeviceAuthTokenPersistsAcrossModelInstances() {
+        let suiteName = "MacPetTests.AuthToken.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let first = AppModel(service: LocalPetInteractionService(), defaults: defaults)
+        let second = AppModel(service: LocalPetInteractionService(), defaults: defaults)
+
+        XCTAssertEqual(first.authToken.count, 64)
+        XCTAssertNotNil(first.authToken.range(of: "^[a-f0-9]{64}$", options: .regularExpression))
+        XCTAssertEqual(first.authToken, second.authToken)
+    }
+
+    func testPetCodeAndIncomingFriendRequestUpdateModel() async throws {
+        let service = LocalPetInteractionService(responseDelay: .zero)
+        let suiteName = "MacPetTests.PetCode.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let model = AppModel(service: service, defaults: defaults)
+        let request = PetFriendRequest(
+            id: String(repeating: "c", count: 32),
+            senderPeerID: String(repeating: "a", count: 32),
+            senderName: "Alice"
+        )
+        model.startListening()
+        await Task.yield()
+
+        await service.simulatePetCode("123456")
+        await service.simulateFriendRequest(request)
+        try await Task.sleep(for: .milliseconds(20))
+
+        XCTAssertEqual(model.petCode, "123456")
+        XCTAssertEqual(model.pendingFriendRequests, [request])
+        XCTAssertEqual(model.bubbleText, "收到 Alice 的好友申请")
+    }
+
+    func testSendingFriendRequestValidatesAndUsesSixDigitPetCode() async {
+        let service = LocalPetInteractionService(responseDelay: .zero)
+        let model = AppModel(service: service)
+
+        await model.sendFriendRequest(code: "1234")
+        XCTAssertEqual(model.bubbleText, "请输入 6 位宠物号")
+        await model.sendFriendRequest(code: "654321")
+
+        let requestedCodes = await service.requestedFriendCodeValues()
+        XCTAssertEqual(requestedCodes, ["654321"])
+        XCTAssertEqual(model.bubbleText, "好友申请已发送")
+    }
+
+    func testAcceptedFriendRequestSavesAndSelectsFriend() async throws {
+        let service = LocalPetInteractionService(responseDelay: .zero)
+        let suiteName = "MacPetTests.AcceptFriend.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let model = AppModel(service: service, defaults: defaults)
+        let requestID = String(repeating: "d", count: 32)
+        let request = PetFriendRequest(
+            id: requestID,
+            senderPeerID: String(repeating: "b", count: 32),
+            senderName: "Bob"
+        )
+        model.startListening()
+        await Task.yield()
+        await service.simulateFriendRequest(request)
+        await service.simulateFriendRequestAccepted(
+            requestID: requestID,
+            peer: PetPeer(id: requestID, name: "Bob", peerID: request.senderPeerID)
+        )
+        try await Task.sleep(for: .milliseconds(20))
+
+        XCTAssertEqual(model.pendingFriendRequests, [])
+        XCTAssertEqual(model.pairedFriend?.peerID, request.senderPeerID)
+        XCTAssertEqual(model.friends.first?.name, "Bob")
+    }
+
+    func testFriendProfileUpdateRenamesSavedFriend() async throws {
+        let service = LocalPetInteractionService(responseDelay: .zero)
+        let suiteName = "MacPetTests.FriendProfile.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let peerID = String(repeating: "b", count: 32)
+        let friend = PetPeer(id: "request", name: "Bob", peerID: peerID)
+        defaults.set(try JSONEncoder().encode([friend]), forKey: "com.macpet.friends")
+        let model = AppModel(service: service, defaults: defaults)
+        model.startListening()
+        await Task.yield()
+
+        await service.simulateFriendProfile(peerID: peerID, name: "Bobby")
+        try await Task.sleep(for: .milliseconds(20))
+
+        XCTAssertEqual(model.friends.first?.name, "Bobby")
+        XCTAssertEqual(model.pairedFriend?.name, "Bobby")
+        XCTAssertEqual(model.bubbleText, "Bob 改名为 Bobby")
+    }
+
     func testInstanceLaunchArgumentsUseSeparateDefaultsSuites() {
         let instanceA = "test-a-\(UUID().uuidString.prefix(8))"
         let instanceB = "test-b-\(UUID().uuidString.prefix(8))"

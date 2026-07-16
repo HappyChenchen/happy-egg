@@ -15,12 +15,16 @@ final class AppModel {
     private static let legacyApplicationIdentifier = "com.macpet.prototype"
     private static let legacyMigrationKey = "io.happypuppy.macpet.did-migrate-prototype-defaults"
     private static let selectedFriendKey = "com.macpet.selected-friend-id"
+    private static let authTokenKey = "com.macpet.auth-token"
+    private static let petCodeKey = "com.macpet.pet-code"
     private static let persistedKeys = [
         "com.macpet.peer-id",
         "com.macpet.pet-scale",
         "com.macpet.pet-name",
         "com.macpet.friends",
-        selectedFriendKey
+        selectedFriendKey,
+        authTokenKey,
+        petCodeKey
     ]
     private var listeningTask: Task<Void, Never>?
     private var connectionTask: Task<Void, Never>?
@@ -34,6 +38,9 @@ final class AppModel {
     private(set) var friends: [PetPeer] = []
     private(set) var onlineFriendPeerIDs: Set<String> = []
     private(set) var peerID: String
+    private(set) var authToken: String
+    private(set) var petCode: String?
+    private(set) var pendingFriendRequests: [PetFriendRequest] = []
     private(set) var petName: String
     private(set) var petScale: PetScale
     var onStateChange: (() -> Void)?
@@ -80,6 +87,10 @@ final class AppModel {
         let savedPeerID = defaults.string(forKey: "com.macpet.peer-id")?.lowercased()
         peerID = savedPeerID.flatMap(Self.validProfileID) ?? Self.makeProfileID()
         defaults.set(peerID, forKey: "com.macpet.peer-id")
+        let savedAuthToken = defaults.string(forKey: Self.authTokenKey)?.lowercased()
+        authToken = savedAuthToken.flatMap(Self.validAuthToken) ?? Self.makeAuthToken()
+        defaults.set(authToken, forKey: Self.authTokenKey)
+        petCode = defaults.string(forKey: Self.petCodeKey).flatMap(Self.validPetCode)
         petScale = PetScale(rawValue: defaults.object(forKey: "com.macpet.pet-scale") as? CGFloat ?? 1) ?? .normal
         let savedPetName = defaults.string(forKey: "com.macpet.pet-name")
         petName = savedPetName == Self.legacyDefaultPetName ? fallbackPetName : (savedPetName ?? fallbackPetName)
@@ -164,6 +175,41 @@ final class AppModel {
                     let knownPeerIDs = Set(self.friends.compactMap { $0.peerID?.lowercased() })
                     guard knownPeerIDs.contains(normalizedPeerID) else { continue }
                     if self.updateFriendPresence(peerID: normalizedPeerID, isOnline: isOnline) { self.onSocialStateChange?() }
+                case let .friendProfile(remotePeerID, name):
+                    let normalizedPeerID = remotePeerID.lowercased()
+                    guard let index = self.friends.firstIndex(where: { $0.peerID?.lowercased() == normalizedPeerID }) else { continue }
+                    let oldFriend = self.friends[index]
+                    guard oldFriend.name != name else { continue }
+                    let renamedFriend = PetPeer(id: oldFriend.id, name: name, peerID: oldFriend.peerID)
+                    self.friends[index] = renamedFriend
+                    if self.pairedFriend?.peerID?.lowercased() == normalizedPeerID { self.pairedFriend = renamedFriend }
+                    self.persistFriends()
+                    self.onSocialStateChange?()
+                    self.setState(text: "\(oldFriend.name) 改名为 \(name)", emotion: .happy, frameName: self.activeFrameName)
+                case let .petCode(code):
+                    guard let validCode = Self.validPetCode(code) else { continue }
+                    self.petCode = validCode
+                    self.defaults.set(validCode, forKey: Self.petCodeKey)
+                    self.onSocialStateChange?()
+                case let .friendRequest(request):
+                    self.pendingFriendRequests.removeAll { $0.id == request.id }
+                    self.pendingFriendRequests.append(request)
+                    self.onSocialStateChange?()
+                    self.setState(text: "收到 \(request.senderName) 的好友申请", emotion: .happy, frameName: self.activeFrameName)
+                case let .friendRequestAccepted(requestID, peer):
+                    self.pendingFriendRequests.removeAll { $0.id == requestID }
+                    self.pairedFriend = peer
+                    self.saveFriend(peer)
+                    self.onSocialStateChange?()
+                    self.setState(text: "已和 \(peer.name) 成为好友", emotion: .happy, frameName: self.activeFrameName)
+                    Task { await self.service.acknowledgeFriendRequest(id: requestID) }
+                case let .friendRequestRejected(requestID):
+                    self.pendingFriendRequests.removeAll { $0.id == requestID }
+                    self.onSocialStateChange?()
+                    self.setState(text: "对方拒绝了好友申请", emotion: .idle, frameName: self.activeFrameName)
+                    Task { await self.service.acknowledgeFriendRequest(id: requestID) }
+                case let .friendRequestFailed(message):
+                    self.setState(text: Self.friendRequestErrorText(message), emotion: .idle, frameName: self.activeFrameName)
                 }
             }
         }
@@ -206,6 +252,43 @@ final class AppModel {
     func isFriendOnline(_ friend: PetPeer) -> Bool {
         guard let friendPeerID = friend.peerID?.lowercased() else { return false }
         return onlineFriendPeerIDs.contains(friendPeerID)
+    }
+
+    func sendFriendRequest(code: String) async {
+        let normalized = code.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let validCode = Self.validPetCode(normalized) else {
+            setState(text: "请输入 6 位宠物号", emotion: .idle, frameName: activeFrameName)
+            return
+        }
+        guard validCode != petCode else {
+            setState(text: "不能添加自己的宠物", emotion: .idle, frameName: activeFrameName)
+            return
+        }
+        let sent = await service.requestFriend(code: validCode)
+        setState(
+            text: sent ? "好友申请已发送" : "发送失败，正在重新连接",
+            emotion: sent ? .happy : .idle,
+            frameName: activeFrameName
+        )
+    }
+
+    func respondToFriendRequest(_ request: PetFriendRequest, accept: Bool) async {
+        guard pendingFriendRequests.contains(where: { $0.id == request.id }) else { return }
+        let sent = await service.respondToFriendRequest(id: request.id, accept: accept)
+        guard sent else {
+            setState(text: "操作失败，请稍后重试", emotion: .idle, frameName: activeFrameName)
+            return
+        }
+        if !accept {
+            pendingFriendRequests.removeAll { $0.id == request.id }
+            onSocialStateChange?()
+            setState(text: "已拒绝好友申请", emotion: .idle, frameName: activeFrameName)
+        }
+    }
+
+    func resetPetCode() async {
+        let sent = await service.resetPetCode()
+        setState(text: sent ? "正在更换宠物号" : "更换失败，请稍后重试", emotion: sent ? .happy : .idle, frameName: activeFrameName)
     }
 
     func createPublicPairing() async -> String {
@@ -336,7 +419,12 @@ final class AppModel {
         let localPeerID = peerID
         let localPetName = petName
         Task {
-            await service.updatePresence(peerID: localPeerID, name: localPetName, friendPeerIDs: friendPeerIDs)
+            await service.updatePresence(
+                peerID: localPeerID,
+                authToken: self.authToken,
+                name: localPetName,
+                friendPeerIDs: friendPeerIDs
+            )
         }
     }
 
@@ -405,8 +493,28 @@ final class AppModel {
         UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
     }
 
+    private static func makeAuthToken() -> String {
+        makeProfileID() + makeProfileID()
+    }
+
     private static func validProfileID(_ value: String) -> String? {
         value.range(of: "^[a-f0-9]{32}$", options: .regularExpression) == nil ? nil : value
+    }
+
+    private static func validAuthToken(_ value: String) -> String? {
+        value.range(of: "^[a-f0-9]{64}$", options: .regularExpression) == nil ? nil : value
+    }
+
+    private static func validPetCode(_ value: String) -> String? {
+        value.range(of: "^[0-9]{6}$", options: .regularExpression) == nil ? nil : value
+    }
+
+    private static func friendRequestErrorText(_ message: String) -> String {
+        switch message {
+        case "pet code not found": "没有找到这个宠物号"
+        case "cannot add yourself": "不能添加自己的宠物"
+        default: "好友申请失败，请稍后重试"
+        }
     }
 
     private static func isValidPairingCode(_ code: String) -> Bool {

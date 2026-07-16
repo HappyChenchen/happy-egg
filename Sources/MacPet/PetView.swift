@@ -15,8 +15,10 @@ final class PetView: NSView {
     var onHide: (() -> Void)?
     var onQuit: (() -> Void)?
     var onScaleChange: ((PetScale) -> Void)?
-    var onCreatePublicPairing: (() -> Void)?
-    var onJoinPublicPairing: (() -> Void)?
+    var onCopyPetCode: (() -> Void)?
+    var onAddFriend: (() -> Void)?
+    var onResetPetCode: (() -> Void)?
+    var onReviewFriendRequest: ((PetFriendRequest) -> Void)?
     var friends: [PetPeer] = []
     var onlineFriendPeerIDs: Set<String> = []
     var onSelectFriend: ((PetPeer) -> Void)?
@@ -24,6 +26,8 @@ final class PetView: NSView {
     var onEditProfile: (() -> Void)?
     var pairedFriend: PetPeer?
     var petName = "我的宠物"
+    var petCode: String?
+    var pendingFriendRequests: [PetFriendRequest] = []
     private var bubbleText: String?
     private var emotion: AppModel.Emotion = .idle
     private var frameIndex = BuddyFrames.initialIndex
@@ -158,20 +162,31 @@ final class PetView: NSView {
         menu.addItem(friendsItem)
         let addFriendItem = NSMenuItem(title: "添加好友", action: nil, keyEquivalent: "")
         let addFriendMenu = NSMenu()
-        if let pairedFriend, pairedFriend.name == "配对码已创建" {
-            let currentCodeItem = NSMenuItem(title: "配对码：\(pairedFriend.id)", action: nil, keyEquivalent: "")
-            currentCodeItem.isEnabled = false
-            addFriendMenu.addItem(currentCodeItem)
-            addFriendMenu.addItem(NSMenuItem.separator())
-        }
-        let createItem = NSMenuItem(title: "生成配对码", action: #selector(createPublicPairing), keyEquivalent: "")
-        createItem.target = self
-        addFriendMenu.addItem(createItem)
-        let joinItem = NSMenuItem(title: "输入配对码…", action: #selector(joinPublicPairing), keyEquivalent: "")
-        joinItem.target = self
-        addFriendMenu.addItem(joinItem)
+        let codeItem = NSMenuItem(title: "我的宠物号：\(petCode ?? "获取中…")", action: nil, keyEquivalent: "")
+        codeItem.isEnabled = false
+        addFriendMenu.addItem(codeItem)
+        let copyItem = NSMenuItem(title: "复制宠物号", action: #selector(copyPetCode), keyEquivalent: "")
+        copyItem.target = self
+        copyItem.isEnabled = petCode != nil
+        addFriendMenu.addItem(copyItem)
+        let addItem = addFriendMenu.addItem(withTitle: "输入宠物号…", action: #selector(addFriend), keyEquivalent: "")
+        addItem.target = self
+        let resetItem = addFriendMenu.addItem(withTitle: "更换宠物号…", action: #selector(resetPetCode), keyEquivalent: "")
+        resetItem.target = self
         addFriendItem.submenu = addFriendMenu
         menu.addItem(addFriendItem)
+        if !pendingFriendRequests.isEmpty {
+            let requestsItem = NSMenuItem(title: "好友申请（\(pendingFriendRequests.count)）", action: nil, keyEquivalent: "")
+            let requestsMenu = NSMenu()
+            for request in pendingFriendRequests {
+                let item = NSMenuItem(title: request.senderName, action: #selector(reviewFriendRequest(_:)), keyEquivalent: "")
+                item.representedObject = request.id
+                item.target = self
+                requestsMenu.addItem(item)
+            }
+            requestsItem.submenu = requestsMenu
+            menu.addItem(requestsItem)
+        }
         if !friends.isEmpty {
             let deleteItem = menu.addItem(withTitle: "删除好友…", action: #selector(removeFriend), keyEquivalent: "")
             deleteItem.attributedTitle = NSAttributedString(
@@ -272,8 +287,14 @@ final class PetView: NSView {
         onScaleChange?(scales[sender.tag])
     }
 
-    @objc private func createPublicPairing() { onCreatePublicPairing?() }
-    @objc private func joinPublicPairing() { onJoinPublicPairing?() }
+    @objc private func copyPetCode() { onCopyPetCode?() }
+    @objc private func addFriend() { onAddFriend?() }
+    @objc private func resetPetCode() { onResetPetCode?() }
+    @objc private func reviewFriendRequest(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String,
+              let request = pendingFriendRequests.first(where: { $0.id == id }) else { return }
+        onReviewFriendRequest?(request)
+    }
 
     @objc private func selectFriend(_ sender: NSMenuItem) {
         guard let id = sender.representedObject as? String, let friend = friends.first(where: { $0.id == id }) else { return }
