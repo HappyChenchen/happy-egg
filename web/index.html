@@ -25,20 +25,25 @@
 
       <section class="desktop-scene" id="desktop-scene">
         <section class="pet-card" id="pet-card" aria-live="polite" data-scale="normal">
-          <div class="pet-card-top"><span class="pet-code" id="pet-code">等待配对</span></div>
+          <div class="pet-card-top"><button class="pet-code" id="pet-code" type="button" title="复制宠物号">宠物号获取中…</button></div>
           <div class="pet-stage" id="pet-stage">
             <img id="pet-image" src="../Sources/MacPet/Resources/ai_buddy_05.png" alt="宠物形象" />
           </div>
           <div class="pet-caption">
             <span class="status-dot" id="pet-status-dot"></span>
-            <div><h2 id="pet-name">未连接</h2><p id="pet-message">打开“操作”输入配对码</p></div>
+            <div><h2 id="pet-name">还没有好友</h2><p id="pet-message">宠物正在连接</p></div>
           </div>
         </section>
 
         <aside class="operation-menu" id="operation-menu" aria-label="宠物操作菜单" hidden>
-          <div class="menu-heading"><strong id="menu-pet-name">未连接</strong><span id="menu-state">未连接</span></div>
+          <div class="menu-heading"><strong id="menu-pet-name">还没有好友</strong><span id="menu-state">连接中</span></div>
           <div class="menu-divider"></div>
-          <div class="menu-pair-row"><input id="pairing-code" maxlength="64" inputmode="numeric" autocomplete="off" placeholder="输入 4 位配对码" /><button class="menu-connect" id="connect-button" type="button">连接</button></div>
+          <div class="menu-code-row"><span>我的宠物号</span><button id="copy-code-button" type="button">获取中…</button><button id="reset-code-button" type="button">更换</button></div>
+          <div class="menu-pair-row"><input id="pairing-code" maxlength="6" inputmode="numeric" autocomplete="off" placeholder="输入 6 位宠物号" /><button class="menu-connect" id="connect-button" type="button">申请</button></div>
+          <div class="friend-request" id="friend-request" hidden>
+            <span id="request-name"></span>
+            <div><button id="reject-request-button" type="button">拒绝</button><button id="accept-request-button" type="button">接受</button></div>
+          </div>
           <input class="menu-name-input" id="web-name" maxlength="20" value="网页宠物" autocomplete="off" aria-label="网页端名字" />
           <div class="menu-divider"></div>
           <div class="menu-actions">
@@ -54,7 +59,8 @@
             <button class="scale-option" data-scale="large" type="button">大</button>
           </div>
           <button class="menu-row" id="hide-button" type="button">隐藏宠物</button>
-          <button class="menu-row menu-row-muted" id="disconnect-button" type="button" disabled>断开连接</button>
+          <button class="menu-row menu-row-muted" id="remove-friend-button" type="button" disabled>删除好友</button>
+          <button class="menu-row menu-row-muted" id="disconnect-button" type="button">断开连接</button>
         </aside>
       </section>
     </main>

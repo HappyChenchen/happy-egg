@@ -191,9 +191,18 @@ p {
 }
 
 .pet-code {
+  padding: 5px 8px;
   color: var(--muted);
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
   font-family: var(--mono);
   font-size: 10px;
+}
+
+.pet-code:hover {
+  color: var(--blue);
+  background: var(--blue-soft);
 }
 
 .pet-stage {
@@ -302,6 +311,32 @@ p {
   gap: 7px;
 }
 
+.menu-code-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 8px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.menu-code-row button {
+  padding: 6px 8px;
+  color: var(--blue);
+  border: 0;
+  border-radius: 8px;
+  background: var(--blue-soft);
+  font-family: var(--mono);
+  font-size: 10px;
+}
+
+.menu-code-row button:last-child {
+  color: var(--muted);
+  background: var(--panel-soft);
+  font-family: var(--sans);
+}
+
 .menu-pair-row input,
 .menu-name-input {
   min-width: 0;
@@ -309,6 +344,42 @@ p {
   border: 1px solid var(--line);
   outline: none;
   background: #fff;
+}
+
+.friend-request {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 9px;
+  padding: 9px 10px;
+  border: 1px solid rgba(79, 147, 239, 0.22);
+  border-radius: 10px;
+  background: var(--blue-soft);
+  font-size: 11px;
+}
+
+.friend-request[hidden] {
+  display: none;
+}
+
+.friend-request div {
+  display: flex;
+  gap: 5px;
+}
+
+.friend-request button {
+  padding: 5px 8px;
+  color: var(--muted);
+  border: 0;
+  border-radius: 7px;
+  background: #fff;
+  font-size: 10px;
+}
+
+.friend-request button:last-child {
+  color: #fff;
+  background: var(--blue);
 }
 
 .menu-pair-row input {
