@@ -1,5 +1,6 @@
 import http from 'node:http';
 import { WebSocketServer, WebSocket } from 'ws';
+import { PetRegistry, RegistryError } from './registry.mjs';
 
 const ROOM_PATTERN = /^(?:\d{4}|[a-hj-km-np-z2-9]{8}|[a-f0-9]{64})$/i;
 const PROFILE_ID_PATTERN = /^[a-f0-9]{32}$/i;
@@ -37,7 +38,11 @@ function rateLimited(meta) {
   return false;
 }
 
-export function createRelayServer({ pairingTTL = 10 * 60_000, heartbeatInterval = 30_000 } = {}) {
+export function createRelayServer({
+  pairingTTL = 10 * 60_000,
+  heartbeatInterval = 30_000,
+  registry = new PetRegistry({ filePath: process.env.MACPET_REGISTRY_PATH ?? null })
+} = {}) {
   const rooms = new Map();
   const metadata = new WeakMap();
   const roomExpiryTimers = new Map();
@@ -135,11 +140,60 @@ export function createRelayServer({ pairingTTL = 10 * 60_000, heartbeatInterval 
       && friendPeerIDs.every((peerID) => typeof peerID === 'string' && PROFILE_ID_PATTERN.test(peerID));
   }
 
+  function requestFailure(socket, error) {
+    const code = error instanceof RegistryError ? error.code : 'request-failed';
+    send(socket, { type: 'friend-request-failed', code, message: error.message });
+  }
+
+  function notificationPayload(request, peerID) {
+    if (request.status === 'pending') {
+      return {
+        type: 'friend-request-incoming',
+        requestID: request.id,
+        senderPeerID: request.fromPeerID,
+        senderName: request.fromName
+      };
+    }
+    if (request.status === 'rejected') {
+      return { type: 'friend-request-rejected', requestID: request.id };
+    }
+    const requester = peerID === request.fromPeerID;
+    return {
+      type: 'friend-request-accepted',
+      requestID: request.id,
+      peerID: requester ? request.toPeerID : request.fromPeerID,
+      name: requester ? request.toName : request.fromName
+    };
+  }
+
+  function deliverNotificationsToSocket(socket, peerID) {
+    for (const request of registry.notificationsFor(peerID)) {
+      send(socket, notificationPayload(request, peerID));
+    }
+  }
+
+  function deliverNotificationsToOnlinePeer(peerID) {
+    for (const socket of onlineProfiles.get(peerID) ?? []) {
+      const meta = metadata.get(socket);
+      if (meta?.mode === 'presence' && meta.authenticated) {
+        deliverNotificationsToSocket(socket, peerID);
+      }
+    }
+  }
+
   function registerPresence(socket, message) {
     if (!validPeerID(message.peerID) || !message.peerID || !validName(message.name) || !validFriendPeerIDs(message.friendPeerIDs)) {
       return reject(socket, 'invalid presence');
     }
     const peerID = message.peerID.toLowerCase();
+    let identity = null;
+    if (message.authToken !== undefined) {
+      try {
+        identity = registry.registerIdentity({ peerID, authToken: message.authToken, name: message.name });
+      } catch (error) {
+        return reject(socket, error instanceof RegistryError ? error.message : 'identity registration failed');
+      }
+    }
     const watchedPeerIDs = new Set(message.friendPeerIDs.map((friendID) => friendID.toLowerCase()).filter((friendID) => friendID !== peerID));
     const existing = metadata.get(socket);
 
@@ -148,12 +202,15 @@ export function createRelayServer({ pairingTTL = 10 * 60_000, heartbeatInterval 
       removeWatcherSubscriptions(socket, existing.watchedPeerIDs);
       existing.name = message.name.trim();
       existing.watchedPeerIDs = watchedPeerIDs;
+      existing.authenticated = identity != null;
     } else {
       leave(socket);
       const sessions = onlineProfiles.get(peerID) ?? new Set();
       sessions.add(socket);
       onlineProfiles.set(peerID, sessions);
-      metadata.set(socket, { mode: 'presence', peerID, name: message.name.trim(), watchedPeerIDs, sentAt: [] });
+      metadata.set(socket, {
+        mode: 'presence', peerID, name: message.name.trim(), watchedPeerIDs, authenticated: identity != null, sentAt: []
+      });
     }
 
     for (const friendID of watchedPeerIDs) {
@@ -165,7 +222,61 @@ export function createRelayServer({ pairingTTL = 10 * 60_000, heartbeatInterval 
     const onlinePeerIDs = [...watchedPeerIDs].filter((friendID) =>
       onlineProfiles.has(friendID) && profileWatches(friendID, peerID)
     );
+    if (identity) {
+      send(socket, { type: 'pet-code', petCode: identity.petCode });
+    }
     send(socket, { type: 'presence-snapshot', onlinePeerIDs });
+    if (identity) {
+      deliverNotificationsToSocket(socket, peerID);
+    }
+  }
+
+  function createFriendRequest(socket, meta, message) {
+    if (!meta.authenticated) return requestFailure(socket, new RegistryError('authentication-required', 'authentication required'));
+    if (rateLimited(meta)) return requestFailure(socket, new RegistryError('rate-limit', 'rate limit'));
+    try {
+      const request = registry.createFriendRequest({
+        fromPeerID: meta.peerID,
+        targetCode: message.petCode,
+        fromName: meta.name
+      });
+      send(socket, {
+        type: 'friend-request-created', requestID: request.id, petCode: String(message.petCode), targetName: request.toName
+      });
+      deliverNotificationsToOnlinePeer(request.toPeerID);
+    } catch (error) {
+      requestFailure(socket, error);
+    }
+  }
+
+  function respondToFriendRequest(socket, meta, message) {
+    if (!meta.authenticated || typeof message.accept !== 'boolean') {
+      return requestFailure(socket, new RegistryError('invalid-request', 'invalid friend request response'));
+    }
+    if (rateLimited(meta)) return requestFailure(socket, new RegistryError('rate-limit', 'rate limit'));
+    try {
+      const request = registry.respondToFriendRequest({
+        requestID: message.requestID,
+        responderPeerID: meta.peerID,
+        accept: message.accept
+      });
+      deliverNotificationsToOnlinePeer(request.fromPeerID);
+      if (request.status === 'accepted') deliverNotificationsToOnlinePeer(request.toPeerID);
+      else send(socket, { type: 'friend-request-responded', requestID: request.id, accepted: false });
+    } catch (error) {
+      requestFailure(socket, error);
+    }
+  }
+
+  function resetPetCode(socket, meta) {
+    if (!meta.authenticated) return requestFailure(socket, new RegistryError('authentication-required', 'authentication required'));
+    if (rateLimited(meta)) return requestFailure(socket, new RegistryError('rate-limit', 'rate limit'));
+    try {
+      const identity = registry.resetCode(meta.peerID);
+      send(socket, { type: 'pet-code', petCode: identity.petCode, reset: true });
+    } catch (error) {
+      requestFailure(socket, error);
+    }
   }
 
   async function routeFriendEvent(socket, meta, message) {
@@ -258,6 +369,13 @@ export function createRelayServer({ pairingTTL = 10 * 60_000, heartbeatInterval 
           void routeFriendEvent(socket, meta, message);
           return;
         }
+        if (message.type === 'friend-request-create') return createFriendRequest(socket, meta, message);
+        if (message.type === 'friend-request-respond') return respondToFriendRequest(socket, meta, message);
+        if (message.type === 'friend-request-ack') {
+          registry.acknowledgeRequest({ requestID: message.requestID, peerID: meta.peerID });
+          return;
+        }
+        if (message.type === 'pet-code-reset') return resetPetCode(socket, meta);
         return reject(socket, 'invalid presence message');
       }
 

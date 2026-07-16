@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { WebSocket } from 'ws';
 import { createRelayServer } from '../server.mjs';
+import { PetRegistry } from '../registry.mjs';
 
 const room = 'a'.repeat(64);
 
@@ -24,6 +25,15 @@ function nextMessageWithin(socket, timeout = 300) {
   ]);
 }
 
+async function nextMessageOfType(socket, type, timeout = 500) {
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    const message = await nextMessageWithin(socket, Math.max(1, deadline - Date.now()));
+    if (message.type === type) return message;
+  }
+  throw new Error(`timed out waiting for ${type}`);
+}
+
 test('serves a JSON health response', async (context) => {
   const relay = createRelayServer();
   const address = await relay.listen(0, '127.0.0.1');
@@ -34,6 +44,47 @@ test('serves a JSON health response', async (context) => {
   assert.equal(response.status, 200);
   assert.equal(response.headers.get('content-type'), 'application/json');
   assert.deepEqual(await response.json(), { ok: true });
+});
+
+test('assigns permanent pet codes and routes an accepted friend request', async (context) => {
+  let nextCode = 345678;
+  const relay = createRelayServer({ registry: new PetRegistry({ randomIntFn: () => nextCode++ }) });
+  const address = await relay.listen(0, '127.0.0.1');
+  context.after(async () => relay.close());
+  const url = `ws://127.0.0.1:${address.port}/ws`;
+  const [alice, bob] = await Promise.all([connect(url), connect(url)]);
+  context.after(() => [alice, bob].forEach((socket) => socket.close()));
+  const aliceID = 'a'.repeat(32);
+  const bobID = 'b'.repeat(32);
+
+  const aliceCode = nextMessageOfType(alice, 'pet-code');
+  const bobCode = nextMessageOfType(bob, 'pet-code');
+  alice.send(JSON.stringify({
+    type: 'presence-register', peerID: aliceID, authToken: '1'.repeat(64), name: 'Alice', friendPeerIDs: []
+  }));
+  bob.send(JSON.stringify({
+    type: 'presence-register', peerID: bobID, authToken: '2'.repeat(64), name: 'Bob', friendPeerIDs: []
+  }));
+  assert.deepEqual(await aliceCode, { type: 'pet-code', petCode: '345678' });
+  assert.deepEqual(await bobCode, { type: 'pet-code', petCode: '345679' });
+
+  const incoming = nextMessageOfType(bob, 'friend-request-incoming');
+  const created = nextMessageOfType(alice, 'friend-request-created');
+  alice.send(JSON.stringify({ type: 'friend-request-create', petCode: '345679' }));
+  const request = await incoming;
+  assert.equal(request.senderPeerID, aliceID);
+  assert.equal(request.senderName, 'Alice');
+  assert.equal((await created).requestID, request.requestID);
+
+  const aliceAccepted = nextMessageOfType(alice, 'friend-request-accepted');
+  const bobAccepted = nextMessageOfType(bob, 'friend-request-accepted');
+  bob.send(JSON.stringify({ type: 'friend-request-respond', requestID: request.requestID, accept: true }));
+  assert.deepEqual(await aliceAccepted, {
+    type: 'friend-request-accepted', requestID: request.requestID, peerID: bobID, name: 'Bob'
+  });
+  assert.deepEqual(await bobAccepted, {
+    type: 'friend-request-accepted', requestID: request.requestID, peerID: aliceID, name: 'Alice'
+  });
 });
 
 test('forwards an event only to the other socket in the room', async (context) => {
