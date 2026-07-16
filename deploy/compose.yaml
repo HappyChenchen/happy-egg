@@ -2,11 +2,15 @@ services:
   relay:
     build: ../relay
     restart: unless-stopped
+    environment:
+      MACPET_REGISTRY_PATH: /data/registry.json
     read_only: true
     security_opt:
       - no-new-privileges:true
     tmpfs:
       - /tmp
+    volumes:
+      - relay_data:/data
     expose:
       - "8080"
     healthcheck:
@@ -30,5 +34,6 @@ services:
       relay:
         condition: service_healthy
 volumes:
+  relay_data:
   caddy_data:
   caddy_config:

@@ -74,11 +74,20 @@ http://localhost:4173/web/?relay=ws://localhost:8080/ws
 
 ## 运维说明
 
-- Relay 不使用数据库，重启会清空在线状态和未完成的配对房间。
-- 客户端会自动重新注册在线状态；已经保存的长期好友不受影响。
-- `relay` 容器以非 root 用户运行，并启用只读文件系统和 Docker 健康检查。
+- Relay 将永久宠物号、设备令牌哈希和好友申请保存在 `relay_data` Docker volume 的 `/data/registry.json`。
+- 重启只会清空在线状态；客户端会自动重连，宠物号和未处理申请不会丢失。
+- `relay` 容器以非 root 用户运行，并启用只读根文件系统、独立可写数据卷和 Docker 健康检查。
 - 证书与 Caddy 状态保存在 `caddy_data`、`caddy_config` Docker volume 中。
 - 部署前可在安装 Docker 的机器运行 `make deploy-config` 验证 Compose 配置。
+
+备份注册表：
+
+```sh
+docker compose -f deploy/compose.yaml exec -T relay \
+  tar cz -C /data . > macpet-registry-backup.tgz
+```
+
+不要执行 `docker compose down -v`，该命令会删除宠物号注册表和 Caddy 数据卷。
 
 ## 故障排查
 
