@@ -5,13 +5,20 @@ const FRAME_NAMES = new Set([
   'ai_buddy_07', 'ai_buddy_08', 'ai_buddy_09', 'ai_buddy_10', 'ai_buddy_11'
 ]);
 const FRAME_BY_KIND = { poke: 'ai_buddy_07', heart: 'ai_buddy_10', celebrate: 'ai_buddy_11' };
+const MAX_MESSAGE_LENGTH = 300;
+const STICKERS = [
+  ['sticker_wave', '👋'], ['sticker_love', '❤️'], ['sticker_laugh', '😂'], ['sticker_cry', '😭'], ['sticker_thumbsup', '👍'],
+  ['sticker_party', '🎉'], ['sticker_gift', '🎁'], ['sticker_coffee', '☕'], ['sticker_moon', '🌙'], ['sticker_flower', '🌸']
+];
+const STICKER_GLYPHS = Object.fromEntries(STICKERS);
 const STORAGE = {
   peerID: 'macpet-web-peer-id',
   authToken: 'macpet-web-auth-token',
   petCode: 'macpet-web-pet-code',
   name: 'macpet-web-name',
   friends: 'macpet-web-friends',
-  selectedFriend: 'macpet-web-selected-friend'
+  selectedFriend: 'macpet-web-selected-friend',
+  messages: 'macpet-web-messages'
 };
 
 const $ = (id) => document.getElementById(id);
@@ -41,10 +48,26 @@ const acceptRequestButton = $('accept-request-button');
 const rejectRequestButton = $('reject-request-button');
 const scaleOptions = [...document.querySelectorAll('.scale-option')];
 const actionButtons = [...document.querySelectorAll('.menu-action')];
+const messageInput = $('message-input');
+const sendMessageButton = $('send-message-button');
+const stickerRow = $('sticker-row');
+const messageHistory = $('message-history');
+const stickerButtons = STICKERS.map(([id, glyph]) => {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'sticker-button';
+  button.textContent = glyph;
+  button.title = id;
+  button.disabled = true;
+  button.addEventListener('click', () => sendSticker(id));
+  stickerRow.appendChild(button);
+  return button;
+});
 
 const peerID = stableHex(STORAGE.peerID, 32);
 const authToken = stableHex(STORAGE.authToken, 64);
 let friends = loadFriends();
+let messages = loadMessages();
 let selectedFriendID = localStorage.getItem(STORAGE.selectedFriend) || friends[0]?.peerID || null;
 let ownPetCode = localStorage.getItem(STORAGE.petCode) || null;
 let socket = null;
@@ -53,6 +76,7 @@ let reconnectAttempt = 0;
 let intentionallyOffline = false;
 let onlinePeerIDs = new Set();
 let pendingRequests = [];
+let pendingRemovalPeerID = null;
 
 webName.value = cleanName(localStorage.getItem(STORAGE.name) || webName.value);
 connectButton.addEventListener('click', sendFriendRequest);
@@ -76,9 +100,12 @@ webName.addEventListener('change', updateProfile);
 hideButton.addEventListener('click', togglePetVisibility);
 scaleOptions.forEach((option) => option.addEventListener('click', () => setPetScale(option.dataset.scale)));
 actionButtons.forEach((button) => button.addEventListener('click', () => sendAction(button.dataset.kind)));
+sendMessageButton.addEventListener('click', sendTextMessage);
+messageInput.addEventListener('keydown', (event) => { if (event.key === 'Enter') sendTextMessage(); });
 
 renderPetCode();
 renderFriend();
+renderMessageHistory();
 connectRelay();
 
 function stableHex(key, length) {
@@ -106,6 +133,67 @@ function saveFriends() {
   else localStorage.removeItem(STORAGE.selectedFriend);
 }
 
+function loadMessages() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(STORAGE.messages) || '[]');
+    return normalizeMessages(parsed);
+  } catch { return []; }
+}
+
+function normalizeMessageRecord(message) {
+  const id = typeof message?.id === 'string' ? message.id.toLowerCase() : '';
+  const senderPeerID = typeof message?.senderPeerID === 'string' ? message.senderPeerID.toLowerCase() : '';
+  const kind = message?.kind;
+  const body = typeof message?.body === 'string' ? message.body.trim() : '';
+  const validBody = kind === 'text'
+    ? body.length > 0 && Array.from(body).length <= MAX_MESSAGE_LENGTH
+    : kind === 'sticker' && Object.hasOwn(STICKER_GLYPHS, body);
+  if (!/^[a-f0-9]{32}$/.test(id) || !/^[a-f0-9]{32}$/.test(senderPeerID) || !validBody) return null;
+  const rawSenderName = typeof message?.senderName === 'string' ? message.senderName : '';
+  return {
+    id,
+    senderPeerID,
+    senderName: rawSenderName.trim().slice(0, 20) || '好友',
+    kind,
+    body,
+    createdAt: Number.isFinite(message?.createdAt) ? message.createdAt : Date.now()
+  };
+}
+
+function normalizeMessages(value) {
+  if (!Array.isArray(value)) return [];
+  const byID = new Map();
+  value.forEach((candidate) => {
+    const record = normalizeMessageRecord(candidate);
+    if (!record) return;
+    byID.delete(record.id);
+    byID.set(record.id, record);
+  });
+  return [...byID.values()].slice(-50);
+}
+
+function persistIncomingMessage(message, sender) {
+  const record = normalizeMessageRecord({
+    id: message.messageID,
+    senderPeerID: message.senderPeerID,
+    senderName: sender?.name || message.senderName || '好友',
+    kind: message.kind,
+    body: message.body,
+    createdAt: message.createdAt
+  });
+  if (!record) return false;
+  const stored = loadMessages();
+  const next = normalizeMessages([...messages, ...stored, record]);
+  try {
+    localStorage.setItem(STORAGE.messages, JSON.stringify(next));
+  } catch {
+    return false;
+  }
+  messages = next;
+  renderMessageHistory();
+  return true;
+}
+
 function selectedFriend() {
   return friends.find((friend) => friend.peerID === selectedFriendID) || friends[0] || null;
 }
@@ -128,7 +216,9 @@ function connectRelay() {
   socket.addEventListener('close', () => {
     socket = null;
     onlinePeerIDs = new Set();
+    pendingRemovalPeerID = null;
     setActionsEnabled(false);
+    setMessagingEnabled(false);
     if (intentionallyOffline) {
       setConnection('idle', '已断开');
       setMessage('已断开连接');
@@ -234,6 +324,16 @@ function handleMessage(message) {
     showMessage(friendRequestError(message.message), 'error');
     return;
   }
+  if (message.type === 'friend-removed' && typeof message.peerID === 'string') {
+    finishFriendRemoval(message.peerID.toLowerCase());
+    return;
+  }
+  if (message.type === 'friend-remove-failed') {
+    pendingRemovalPeerID = null;
+    renderFriend();
+    showMessage('删除好友失败，请联网后重试', 'error');
+    return;
+  }
   if (message.type === 'friend-event') {
     const sender = friends.find((friend) => friend.peerID === message.senderPeerID);
     if (sender) {
@@ -255,6 +355,26 @@ function handleMessage(message) {
     onlinePeerIDs.delete(message.targetPeerID);
     renderFriend();
     setMessage('对方暂时收不到', 'error');
+    return;
+  }
+  if (message.type === 'friend-message-incoming') {
+    const sender = friends.find((friend) => friend.peerID === message.senderPeerID);
+    if (sender) { selectedFriendID = sender.peerID; saveFriends(); }
+    if (!persistIncomingMessage(message, sender)) {
+      showMessage('留言保存失败，稍后会重试', 'error');
+      return;
+    }
+    send({ type: 'friend-message-ack', messageID: message.messageID });
+    renderFriend();
+    setMessage(messagePreview(message, sender));
+    return;
+  }
+  if (message.type === 'friend-message-sent') {
+    setMessage('留言已发送');
+    return;
+  }
+  if (message.type === 'friend-message-failed') {
+    showMessage(messageError(message.message), 'error');
     return;
   }
   if (message.type === 'error') showMessage(message.message || '连接失败', 'error');
@@ -279,13 +399,26 @@ function respondToCurrentRequest(accept) {
 function removeSelectedFriend() {
   const friend = selectedFriend();
   if (!friend || !window.confirm(`删除好友 ${friend.name}？`)) return;
-  friends = friends.filter((item) => item.peerID !== friend.peerID);
-  onlinePeerIDs.delete(friend.peerID);
+  if (!send({ type: 'friend-remove', targetPeerID: friend.peerID })) {
+    showMessage('删除好友失败，请联网后重试', 'error');
+    connectRelay();
+    return;
+  }
+  pendingRemovalPeerID = friend.peerID;
+  renderFriend();
+  showMessage('正在删除好友…');
+}
+
+function finishFriendRemoval(peerID) {
+  const removed = friends.find((friend) => friend.peerID === peerID);
+  friends = friends.filter((item) => item.peerID !== peerID);
+  onlinePeerIDs.delete(peerID);
   selectedFriendID = friends[0]?.peerID || null;
+  if (pendingRemovalPeerID === peerID) pendingRemovalPeerID = null;
   saveFriends();
-  registerPresence();
   renderFriend();
   closeMenu();
+  showMessage(removed ? `已删除好友 ${removed.name}` : '好友关系已解除');
 }
 
 function resetPetCode() {
@@ -322,6 +455,42 @@ function sendAction(kind) {
   closeMenu();
 }
 
+function sendTextMessage() {
+  const friend = selectedFriend();
+  if (!friend) return;
+  const body = Array.from(messageInput.value.trim()).slice(0, MAX_MESSAGE_LENGTH).join('');
+  if (!body) return showMessage('留言不能为空', 'error');
+  if (!sendFriendMessage(friend.peerID, 'text', body)) {
+    showMessage('尚未连接，正在重试', 'error');
+    connectRelay();
+    return;
+  }
+  messageInput.value = '';
+  setMessage(`已给 ${friend.name} 留言`);
+}
+
+function sendSticker(id) {
+  const friend = selectedFriend();
+  if (!friend) return;
+  if (!sendFriendMessage(friend.peerID, 'sticker', id)) {
+    showMessage('尚未连接，正在重试', 'error');
+    connectRelay();
+    return;
+  }
+  setMessage(`已发送 ${STICKER_GLYPHS[id] || '贴纸'}`);
+  closeMenu();
+}
+
+function sendFriendMessage(peerID, kind, body) {
+  return send({
+    type: 'friend-message-send',
+    messageID: crypto.randomUUID().replaceAll('-', '').toLowerCase(),
+    targetPeerID: peerID,
+    kind,
+    body
+  });
+}
+
 function send(payload) {
   if (!socket || socket.readyState !== WebSocket.OPEN) return false;
   socket.send(JSON.stringify(payload));
@@ -356,11 +525,14 @@ function renderFriend() {
   const online = Boolean(friend && onlinePeerIDs.has(friend.peerID) && socket?.readyState === WebSocket.OPEN);
   petName.textContent = friend?.name || '还没有好友';
   menuPetName.textContent = friend?.name || '还没有好友';
-  removeFriendButton.disabled = !friend;
+  removeFriendButton.disabled = !friend || pendingRemovalPeerID === friend.peerID;
   setActionsEnabled(online);
+  setMessagingEnabled(Boolean(friend) && socket?.readyState === WebSocket.OPEN);
   if (online) {
     setConnection('online', '在线');
-    if (!petMessage.textContent || petMessage.textContent.includes('连接')) setMessage('可以互动了');
+    if (!petMessage.textContent || petMessage.textContent.includes('连接') || petMessage.textContent === '好友暂时不在线') {
+      setMessage('可以互动了');
+    }
   } else if (socket?.readyState === WebSocket.OPEN) {
     setConnection('idle', friend ? '好友离线' : '已连接');
     if (!friend) setMessage('输入朋友的宠物号');
@@ -374,12 +546,43 @@ function renderRequest() {
   requestName.textContent = request ? `${request.senderName || '新朋友'} 想添加你` : '';
 }
 
+function renderMessageHistory() {
+  messageHistory.replaceChildren();
+  if (messages.length === 0) {
+    const empty = document.createElement('p');
+    empty.className = 'message-history-empty';
+    empty.textContent = '还没有收到留言';
+    messageHistory.appendChild(empty);
+    return;
+  }
+  [...messages].reverse().slice(0, 10).forEach((message) => {
+    const item = document.createElement('div');
+    item.className = 'message-history-item';
+    const sender = document.createElement('strong');
+    sender.textContent = message.senderName;
+    const body = document.createElement('span');
+    body.textContent = message.kind === 'sticker'
+      ? `${STICKER_GLYPHS[message.body] || '🎁'} 贴纸`
+      : message.body;
+    item.append(sender, body);
+    messageHistory.appendChild(item);
+  });
+}
+
 function cleanName(value) { return (value || '网页宠物').trim().slice(0, 20) || '网页宠物'; }
 function friendRequestError(message) {
   return ({ 'pet code not found': '没有找到这个宠物号', 'cannot add yourself': '不能添加自己的宠物' }[message] || '好友申请失败，请重试');
 }
 function incomingText(kind) { return ({ poke: '拍了拍你', heart: '送来一颗爱心', celebrate: '邀请你一起庆祝' }[kind] || '和你互动了'); }
 function outgoingText(kind) { return ({ poke: '拍了一拍', heart: '送出一颗爱心', celebrate: '发起庆祝' }[kind] || '发送了互动'); }
+function messagePreview(message, sender) {
+  const name = message.senderName || sender?.name || '好友';
+  if (message.kind === 'sticker') return `${name} 发来 ${STICKER_GLYPHS[message.body] || '🎁'}`;
+  return `${name}：${message.body || ''}`;
+}
+function messageError(message) {
+  return ({ 'not friends': '对方不是你的好友', 'rate limit': '留言太频繁，请稍后再试', 'authentication required': '身份未就绪，请稍后重试' }[message] || '留言发送失败，请重试');
+}
 function showMessage(text, type = '') { petMessage.textContent = text; petMessage.dataset.type = type; }
 function setMessage(text, type = '') { showMessage(text, type); }
 function setConnection(state, label) {
@@ -389,6 +592,11 @@ function setConnection(state, label) {
   petStatusDot.classList.toggle('online', state === 'online');
 }
 function setActionsEnabled(enabled) { actionButtons.forEach((button) => { button.disabled = !enabled; }); }
+function setMessagingEnabled(enabled) {
+  messageInput.disabled = !enabled;
+  sendMessageButton.disabled = !enabled;
+  stickerButtons.forEach((button) => { button.disabled = !enabled; });
+}
 function toggleMenu() { operationMenu.hidden ? openMenu() : closeMenu(); }
 function openMenu() { operationMenu.hidden = false; menuButton.setAttribute('aria-expanded', 'true'); }
 function closeMenu() { operationMenu.hidden = true; menuButton.setAttribute('aria-expanded', 'false'); }

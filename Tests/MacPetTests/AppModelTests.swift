@@ -473,7 +473,7 @@ final class AppModelTests: XCTestCase {
         let stableID = String(repeating: "c", count: 32)
         let friend = PetPeer(id: "room-c", name: "Cara", peerID: stableID)
         defaults.set(try JSONEncoder().encode([friend]), forKey: "com.macpet.friends")
-        let service = LocalPetInteractionService(responseDelay: .zero)
+        let service = LocalPetInteractionService(responseDelay: .milliseconds(30))
         let model = AppModel(service: service, defaults: defaults)
         await model.selectFriend(friend)
         model.startListening()
@@ -484,12 +484,34 @@ final class AppModelTests: XCTestCase {
 
         model.removeFriend(friend)
 
+        XCTAssertEqual(model.friends, [friend])
+        try await Task.sleep(for: .milliseconds(60))
+
         XCTAssertTrue(model.friends.isEmpty)
         XCTAssertNil(model.pairedFriend)
         XCTAssertFalse(model.isFriendOnline(friend))
         XCTAssertNil(defaults.string(forKey: "com.macpet.selected-friend-id"))
         let restored = AppModel(service: LocalPetInteractionService(), defaults: defaults)
         XCTAssertTrue(restored.friends.isEmpty)
+        let removedPeerIDs = await service.removedFriendPeerIDValues()
+        XCTAssertEqual(removedPeerIDs, [stableID])
+    }
+
+    func testRemovingFriendKeepsLocalRecordWhenRelayDoesNotConfirm() async throws {
+        let suiteName = "MacPetTests.RemoveFriendFailure.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let stableID = String(repeating: "d", count: 32)
+        let friend = PetPeer(id: "room-d", name: "Dana", peerID: stableID)
+        defaults.set(try JSONEncoder().encode([friend]), forKey: "com.macpet.friends")
+        let service = LocalPetInteractionService(responseDelay: .zero, sendSucceeds: false)
+        let model = AppModel(service: service, defaults: defaults)
+
+        model.removeFriend(friend)
+        try await Task.sleep(for: .milliseconds(20))
+
+        XCTAssertEqual(model.friends, [friend])
+        XCTAssertEqual(model.bubbleText, "删除好友失败，请联网后重试")
     }
 
     func testSameNamedFriendKeepsOnlyNewestPairing() async throws {
@@ -573,4 +595,203 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(updatedNames, ["小蛋"])
         XCTAssertEqual(model.bubbleText, "名字已更新，朋友会看到")
     }
+
+    private func modelWithSavedFriend(
+        _ friend: PetPeer,
+        service: LocalPetInteractionService,
+        suiteName: String
+    ) throws -> (AppModel, UserDefaults) {
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.set(try JSONEncoder().encode([friend]), forKey: "com.macpet.friends")
+        return (AppModel(service: service, defaults: defaults), defaults)
+    }
+
+    func testSendingTextMessageWaitsForRelayAcceptanceBeforeShowingSuccess() async throws {
+        let suiteName = "MacPetTests.SendMessage.\(UUID().uuidString)"
+        let stableID = String(repeating: "a", count: 32)
+        let friend = PetPeer(id: "room-a", name: "Alice", peerID: stableID)
+        let service = LocalPetInteractionService(
+            responseDelay: .milliseconds(100),
+            messageSendResult: .accepted
+        )
+        let (model, defaults) = try modelWithSavedFriend(friend, service: service, suiteName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        await model.selectFriend(friend)
+
+        let pendingSend = Task { await model.sendMessage(kind: .text, body: "  在吗  ") }
+        try await Task.sleep(for: .milliseconds(20))
+
+        XCTAssertNotEqual(model.bubbleText, "已给 Alice 留言")
+
+        await pendingSend.value
+
+        let sent = await service.sentMessageValues()
+        XCTAssertEqual(sent.count, 1)
+        XCTAssertEqual(sent.first?.peerID, stableID)
+        XCTAssertEqual(sent.first?.kind, .text)
+        XCTAssertEqual(sent.first?.body, "在吗")
+        XCTAssertEqual(model.bubbleText, "已给 Alice 留言")
+    }
+
+    func testRateLimitedMessageShowsLocalizedRelayFailure() async throws {
+        let suiteName = "MacPetTests.RateLimitedMessage.\(UUID().uuidString)"
+        let friend = PetPeer(id: "room-a", name: "Alice", peerID: String(repeating: "a", count: 32))
+        let service = LocalPetInteractionService(
+            responseDelay: .zero,
+            messageSendResult: .rejected(message: "rate limit")
+        )
+        let (model, defaults) = try modelWithSavedFriend(friend, service: service, suiteName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        await model.selectFriend(friend)
+
+        await model.sendMessage(kind: .text, body: "在吗")
+
+        XCTAssertEqual(model.bubbleText, "留言太频繁，请稍后再试")
+    }
+
+    func testMessageTransportFailureShowsReconnectFailure() async throws {
+        let suiteName = "MacPetTests.MessageTransportFailure.\(UUID().uuidString)"
+        let friend = PetPeer(id: "room-a", name: "Alice", peerID: String(repeating: "a", count: 32))
+        let service = LocalPetInteractionService(
+            responseDelay: .zero,
+            messageSendResult: .transportFailure
+        )
+        let (model, defaults) = try modelWithSavedFriend(friend, service: service, suiteName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        await model.selectFriend(friend)
+
+        await model.sendMessage(kind: .text, body: "在吗")
+
+        XCTAssertEqual(model.bubbleText, "留言发送失败，正在重新连接")
+    }
+
+    func testSendingStickerUsesWhitelistedIdentifier() async throws {
+        let suiteName = "MacPetTests.SendSticker.\(UUID().uuidString)"
+        let friend = PetPeer(id: "room-a", name: "Alice", peerID: String(repeating: "a", count: 32))
+        let service = LocalPetInteractionService(responseDelay: .zero)
+        let (model, defaults) = try modelWithSavedFriend(friend, service: service, suiteName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        await model.selectFriend(friend)
+
+        await model.sendMessage(kind: .sticker, body: PetSticker.love.identifier)
+
+        let sent = await service.sentMessageValues()
+        XCTAssertEqual(sent.first?.kind, .sticker)
+        XCTAssertEqual(sent.first?.body, "sticker_love")
+        XCTAssertEqual(model.bubbleText, "已发给 Alice ❤️")
+    }
+
+    func testEmptyTextMessageIsRejectedBeforeSending() async throws {
+        let suiteName = "MacPetTests.EmptyMessage.\(UUID().uuidString)"
+        let friend = PetPeer(id: "room-a", name: "Alice", peerID: String(repeating: "a", count: 32))
+        let service = LocalPetInteractionService(responseDelay: .zero)
+        let (model, defaults) = try modelWithSavedFriend(friend, service: service, suiteName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        await model.selectFriend(friend)
+
+        await model.sendMessage(kind: .text, body: "   ")
+
+        XCTAssertEqual(model.bubbleText, "留言不能为空")
+        let sent = await service.sentMessageValues()
+        XCTAssertTrue(sent.isEmpty)
+    }
+
+    func testNormalizedTextLimitsEmojiByUnicodeScalarCount() {
+        let input = String(repeating: "😀", count: 301)
+
+        let normalized = PetMessage.normalizedText(input)
+
+        XCTAssertEqual(normalized.unicodeScalars.count, PetMessage.maxTextLength)
+        XCTAssertEqual(normalized, String(repeating: "😀", count: 300))
+    }
+
+    func testSendingMessageWithoutFriendShowsHint() async {
+        let model = AppModel(service: LocalPetInteractionService(responseDelay: .zero))
+        await model.sendMessage(kind: .text, body: "hi")
+        XCTAssertEqual(model.bubbleText, "请选择好友后再留言")
+    }
+
+    func testIncomingMessageIsStoredUnreadResolvedAndAcknowledged() async throws {
+        let suiteName = "MacPetTests.IncomingMessage.\(UUID().uuidString)"
+        let senderID = String(repeating: "a", count: 32)
+        let friend = PetPeer(id: "room-a", name: "Alice", peerID: senderID)
+        let service = LocalPetInteractionService(responseDelay: .zero)
+        let (model, defaults) = try modelWithSavedFriend(friend, service: service, suiteName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        model.startListening()
+        await Task.yield()
+        let message = PetMessage(
+            id: String(repeating: "e", count: 32),
+            senderPeerID: senderID,
+            senderName: "线上名字",
+            kind: .text,
+            body: "晚上一起玩",
+            receivedAt: .now
+        )
+
+        await service.simulateFriendMessage(message)
+        try await Task.sleep(for: .milliseconds(20))
+
+        XCTAssertEqual(model.messages.count, 1)
+        XCTAssertEqual(model.messages.first?.body, "晚上一起玩")
+        XCTAssertEqual(model.messages.first?.senderName, "Alice")
+        XCTAssertEqual(model.unreadMessageCount, 1)
+        XCTAssertEqual(model.bubbleText, "Alice：晚上一起玩")
+        let acked = await service.acknowledgedMessageValues()
+        XCTAssertEqual(acked, [String(repeating: "e", count: 32)])
+    }
+
+    func testDuplicateIncomingMessageIsAcknowledgedWithoutDuplicateStorage() async throws {
+        let suiteName = "MacPetTests.DuplicateMessage.\(UUID().uuidString)"
+        let senderID = String(repeating: "a", count: 32)
+        let friend = PetPeer(id: "room-a", name: "Alice", peerID: senderID)
+        let service = LocalPetInteractionService(responseDelay: .zero)
+        let (model, defaults) = try modelWithSavedFriend(friend, service: service, suiteName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        model.startListening()
+        await Task.yield()
+        let message = PetMessage(
+            id: String(repeating: "e", count: 32),
+            senderPeerID: senderID,
+            senderName: "Alice",
+            kind: .sticker,
+            body: PetSticker.party.identifier
+        )
+
+        await service.simulateFriendMessage(message)
+        await service.simulateFriendMessage(message)
+        try await Task.sleep(for: .milliseconds(20))
+
+        XCTAssertEqual(model.messages.count, 1)
+        let acked = await service.acknowledgedMessageValues()
+        XCTAssertEqual(acked.count, 2)
+    }
+
+    func testStoredMessagePersistsAndOpeningMarksItRead() async throws {
+        let suiteName = "MacPetTests.PersistMessage.\(UUID().uuidString)"
+        let senderID = String(repeating: "a", count: 32)
+        let friend = PetPeer(id: "room-a", name: "Alice", peerID: senderID)
+        let service = LocalPetInteractionService(responseDelay: .zero)
+        let (model, defaults) = try modelWithSavedFriend(friend, service: service, suiteName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        model.startListening()
+        await Task.yield()
+        await service.simulateFriendMessage(PetMessage(
+            id: String(repeating: "e", count: 32),
+            senderPeerID: senderID,
+            senderName: "Alice",
+            kind: .text,
+            body: "记得回我"
+        ))
+        try await Task.sleep(for: .milliseconds(20))
+
+        let restored = AppModel(service: LocalPetInteractionService(), defaults: defaults)
+        XCTAssertEqual(restored.messages.count, 1)
+        XCTAssertEqual(restored.unreadMessageCount, 1)
+
+        restored.openMessage(restored.messages[0])
+        XCTAssertEqual(restored.unreadMessageCount, 0)
+        XCTAssertEqual(restored.bubbleText, "Alice：记得回我")
+    }
+
 }

@@ -14,6 +14,14 @@ enum PetConnectionUpdate: Equatable, Sendable {
     case friendRequestAccepted(requestID: String, peer: PetPeer)
     case friendRequestRejected(requestID: String)
     case friendRequestFailed(message: String)
+    case friendRemoved(peerID: String)
+    case friendMessage(PetMessage)
+}
+
+enum PetMessageSendResult: Equatable, Sendable {
+    case accepted
+    case rejected(message: String)
+    case transportFailure
 }
 
 protocol PetInteractionService: Sendable {
@@ -25,6 +33,9 @@ protocol PetInteractionService: Sendable {
     func respondToFriendRequest(id: String, accept: Bool) async -> Bool
     func resetPetCode() async -> Bool
     func acknowledgeFriendRequest(id: String) async
+    func removeFriend(peerID: String) async -> Bool
+    func sendMessage(to peerID: String, messageID: String, kind: PetMessage.Kind, body: String) async -> PetMessageSendResult
+    func acknowledgeMessage(id: String) async
     func send(_ event: PetEvent, to peerID: String) async -> Bool
     func incomingEvents() async -> AsyncStream<PetEvent>
     func connectionUpdates() async -> AsyncStream<PetConnectionUpdate>
@@ -38,14 +49,22 @@ actor LocalPetInteractionService: PetInteractionService {
     private let connectionContinuation: AsyncStream<PetConnectionUpdate>.Continuation
     private let responseDelay: Duration
     private let sendSucceeds: Bool
+    private let messageSendResult: PetMessageSendResult
     private var updatedNames: [String] = []
     private var presenceSubscriptions: [Set<String>] = []
     private var sentTargets: [String] = []
     private var pairedRooms: [String] = []
     private var requestedFriendCodes: [String] = []
     private var friendRequestResponses: [(String, Bool)] = []
+    private var removedFriendPeerIDs: [String] = []
+    private var sentMessages: [(peerID: String, messageID: String, kind: PetMessage.Kind, body: String)] = []
+    private var acknowledgedMessages: [String] = []
 
-    init(responseDelay: Duration = .milliseconds(850), sendSucceeds: Bool = true) {
+    init(
+        responseDelay: Duration = .milliseconds(850),
+        sendSucceeds: Bool = true,
+        messageSendResult: PetMessageSendResult? = nil
+    ) {
         var savedContinuation: AsyncStream<PetEvent>.Continuation!
         stream = AsyncStream { savedContinuation = $0 }
         continuation = savedContinuation
@@ -54,6 +73,7 @@ actor LocalPetInteractionService: PetInteractionService {
         connectionContinuation = savedConnection
         self.responseDelay = responseDelay
         self.sendSucceeds = sendSucceeds
+        self.messageSendResult = messageSendResult ?? (sendSucceeds ? .accepted : .transportFailure)
     }
 
     func incomingEvents() async -> AsyncStream<PetEvent> {
@@ -73,6 +93,24 @@ actor LocalPetInteractionService: PetInteractionService {
     }
     func resetPetCode() async -> Bool { sendSucceeds }
     func acknowledgeFriendRequest(id: String) async {}
+    func removeFriend(peerID: String) async -> Bool {
+        removedFriendPeerIDs.append(peerID)
+        guard sendSucceeds else { return false }
+        try? await Task.sleep(for: responseDelay)
+        connectionContinuation.yield(.friendRemoved(peerID: peerID))
+        return true
+    }
+    func sendMessage(
+        to peerID: String,
+        messageID: String,
+        kind: PetMessage.Kind,
+        body: String
+    ) async -> PetMessageSendResult {
+        sentMessages.append((peerID, messageID, kind, body))
+        try? await Task.sleep(for: responseDelay)
+        return messageSendResult
+    }
+    func acknowledgeMessage(id: String) async { acknowledgedMessages.append(id) }
 
     func updatedNameValues() -> [String] { updatedNames }
     func presenceSubscriptionValues() -> [Set<String>] { presenceSubscriptions }
@@ -80,6 +118,9 @@ actor LocalPetInteractionService: PetInteractionService {
     func pairedRoomValues() -> [String] { pairedRooms }
     func requestedFriendCodeValues() -> [String] { requestedFriendCodes }
     func friendRequestResponseValues() -> [(String, Bool)] { friendRequestResponses }
+    func removedFriendPeerIDValues() -> [String] { removedFriendPeerIDs }
+    func sentMessageValues() -> [(peerID: String, messageID: String, kind: PetMessage.Kind, body: String)] { sentMessages }
+    func acknowledgedMessageValues() -> [String] { acknowledgedMessages }
 
     func send(_ event: PetEvent, to peerID: String) async -> Bool {
         sentTargets.append(peerID)
@@ -116,6 +157,7 @@ actor LocalPetInteractionService: PetInteractionService {
         connectionContinuation.yield(.friendProfile(peerID: peerID, name: name))
     }
     func simulatePetCode(_ code: String) { connectionContinuation.yield(.petCode(code)) }
+    func simulateFriendMessage(_ message: PetMessage) { connectionContinuation.yield(.friendMessage(message)) }
     func simulateFriendRequest(_ request: PetFriendRequest) { connectionContinuation.yield(.friendRequest(request)) }
     func simulateFriendRequestAccepted(requestID: String, peer: PetPeer) {
         connectionContinuation.yield(.friendRequestAccepted(requestID: requestID, peer: peer))
@@ -128,7 +170,14 @@ actor LocalPetInteractionService: PetInteractionService {
 /// Public, server-mediated transport for friends who are not on the same Wi-Fi.
 @MainActor
 final class PublicPetInteractionService: PetInteractionService {
-    private let endpoint = URL(string: "wss://happypuppy.io/ws")!
+    private struct PendingMessage {
+        let targetPeerID: String
+        let kind: PetMessage.Kind
+        let body: String
+    }
+
+    private static let productionEndpoint = URL(string: "wss://happypuppy.io/ws")!
+    private let endpoint: URL
     private let stream: AsyncStream<PetEvent>
     private let continuation: AsyncStream<PetEvent>.Continuation
     private let connectionStream: AsyncStream<PetConnectionUpdate>
@@ -151,14 +200,41 @@ final class PublicPetInteractionService: PetInteractionService {
     private var presenceReconnectEnabled = false
     private var pendingDeliveries: [String: CheckedContinuation<Bool, Never>] = [:]
     private var deliveryTimeoutTasks: [String: Task<Void, Never>] = [:]
+    private var pendingMessageDeliveries: [String: CheckedContinuation<PetMessageSendResult, Never>] = [:]
+    private var pendingMessages: [String: PendingMessage] = [:]
+    private var messageDeliveryTimeoutTasks: [String: Task<Void, Never>] = [:]
+    private var pendingFriendRemovalDeliveries: [String: CheckedContinuation<Bool, Never>] = [:]
+    private var friendRemovalTimeoutTasks: [String: Task<Void, Never>] = [:]
 
-    init() {
+    init(endpoint: URL = PublicPetInteractionService.resolvedEndpoint()) {
+        self.endpoint = endpoint
         var savedContinuation: AsyncStream<PetEvent>.Continuation!
         stream = AsyncStream { savedContinuation = $0 }
         continuation = savedContinuation
         var savedConnection: AsyncStream<PetConnectionUpdate>.Continuation!
         connectionStream = AsyncStream { savedConnection = $0 }
         connectionContinuation = savedConnection
+    }
+
+    /// Defaults to the public relay. For local testing, override with the
+    /// `--relay <url>` launch argument or the `MACPET_RELAY_URL` environment
+    /// variable (for example `ws://localhost:8080/ws`).
+    static func resolvedEndpoint(
+        arguments: [String] = ProcessInfo.processInfo.arguments,
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> URL {
+        let override: String?
+        if let index = arguments.firstIndex(of: "--relay"), arguments.indices.contains(index + 1) {
+            override = arguments[index + 1]
+        } else {
+            override = environment["MACPET_RELAY_URL"]
+        }
+        guard let override,
+              let url = URL(string: override.trimmingCharacters(in: .whitespacesAndNewlines)),
+              let scheme = url.scheme?.lowercased(), scheme == "ws" || scheme == "wss" else {
+            return productionEndpoint
+        }
+        return url
     }
 
     deinit {
@@ -169,6 +245,10 @@ final class PublicPetInteractionService: PetInteractionService {
         presenceOfflineTask?.cancel()
         deliveryTimeoutTasks.values.forEach { $0.cancel() }
         pendingDeliveries.values.forEach { $0.resume(returning: false) }
+        messageDeliveryTimeoutTasks.values.forEach { $0.cancel() }
+        pendingMessageDeliveries.values.forEach { $0.resume(returning: .transportFailure) }
+        friendRemovalTimeoutTasks.values.forEach { $0.cancel() }
+        pendingFriendRemovalDeliveries.values.forEach { $0.resume(returning: false) }
         task?.cancel(with: .goingAway, reason: nil)
         presenceTask?.cancel(with: .goingAway, reason: nil)
         continuation.finish()
@@ -258,6 +338,55 @@ final class PublicPetInteractionService: PetInteractionService {
     func acknowledgeFriendRequest(id: String) async {
         guard let socket = presenceTask else { return }
         _ = await sendJSON(["type": "friend-request-ack", "requestID": id], through: socket)
+    }
+
+    func removeFriend(peerID: String) async -> Bool {
+        guard presenceTask != nil,
+              peerID.range(of: "^[a-fA-F0-9]{32}$", options: .regularExpression) != nil else { return false }
+        let normalizedPeerID = peerID.lowercased()
+        resolveFriendRemoval(peerID: normalizedPeerID, removed: false)
+        return await withCheckedContinuation { delivery in
+            pendingFriendRemovalDeliveries[normalizedPeerID] = delivery
+            friendRemovalTimeoutTasks[normalizedPeerID] = Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .seconds(10))
+                guard !Task.isCancelled, let self else { return }
+                self.resolveFriendRemoval(peerID: normalizedPeerID, removed: false)
+            }
+            Task { @MainActor [weak self] in
+                await self?.transmitPendingFriendRemoval(peerID: normalizedPeerID)
+            }
+        }
+    }
+
+    func sendMessage(
+        to peerID: String,
+        messageID: String,
+        kind: PetMessage.Kind,
+        body: String
+    ) async -> PetMessageSendResult {
+        guard presenceTask != nil else { return .transportFailure }
+        let normalizedID = messageID.lowercased()
+        return await withCheckedContinuation { delivery in
+            pendingMessageDeliveries[normalizedID] = delivery
+            pendingMessages[normalizedID] = PendingMessage(
+                targetPeerID: peerID.lowercased(),
+                kind: kind,
+                body: body
+            )
+            messageDeliveryTimeoutTasks[normalizedID] = Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .seconds(10))
+                guard !Task.isCancelled, let self else { return }
+                self.resolveMessageDelivery(messageID: normalizedID, result: .transportFailure)
+            }
+            Task { @MainActor [weak self] in
+                await self?.transmitPendingMessage(messageID: normalizedID)
+            }
+        }
+    }
+
+    func acknowledgeMessage(id: String) async {
+        guard let socket = presenceTask else { return }
+        _ = await sendJSON(["type": "friend-message-ack", "messageID": id], through: socket)
     }
 
     func updateName(_ name: String) async {
@@ -415,6 +544,54 @@ final class PublicPetInteractionService: PetInteractionService {
         for eventID in eventIDs { resolveDelivery(eventID: eventID, delivered: false) }
     }
 
+    private func resolveMessageDelivery(messageID: String, result: PetMessageSendResult) {
+        messageDeliveryTimeoutTasks.removeValue(forKey: messageID)?.cancel()
+        pendingMessages.removeValue(forKey: messageID)
+        pendingMessageDeliveries.removeValue(forKey: messageID)?.resume(returning: result)
+    }
+
+    private func transmitPendingMessage(messageID: String) async {
+        guard let pending = pendingMessages[messageID], let socket = presenceTask else { return }
+        let sent = await sendJSON([
+            "type": "friend-message-send",
+            "messageID": messageID,
+            "targetPeerID": pending.targetPeerID,
+            "kind": pending.kind.rawValue,
+            "body": pending.body
+        ], through: socket)
+        if !sent { handlePresenceConnectionLoss(for: socket) }
+    }
+
+    private func resendPendingMessages() {
+        for messageID in pendingMessages.keys {
+            Task { @MainActor [weak self] in
+                await self?.transmitPendingMessage(messageID: messageID)
+            }
+        }
+    }
+
+    private func resolveFriendRemoval(peerID: String, removed: Bool) {
+        friendRemovalTimeoutTasks.removeValue(forKey: peerID)?.cancel()
+        pendingFriendRemovalDeliveries.removeValue(forKey: peerID)?.resume(returning: removed)
+    }
+
+    private func transmitPendingFriendRemoval(peerID: String) async {
+        guard pendingFriendRemovalDeliveries[peerID] != nil, let socket = presenceTask else { return }
+        let sent = await sendJSON([
+            "type": "friend-remove",
+            "targetPeerID": peerID
+        ], through: socket)
+        if !sent { handlePresenceConnectionLoss(for: socket) }
+    }
+
+    private func resendPendingFriendRemovals() {
+        for peerID in pendingFriendRemovalDeliveries.keys {
+            Task { @MainActor [weak self] in
+                await self?.transmitPendingFriendRemoval(peerID: peerID)
+            }
+        }
+    }
+
     private func handleMessage(_ text: String) {
         guard let data = text.data(using: .utf8),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
@@ -450,6 +627,8 @@ final class PublicPetInteractionService: PetInteractionService {
             presenceOfflineTask?.cancel()
             presenceOfflineTask = nil
             connectionContinuation.yield(.presenceSnapshot(onlinePeerIDs: Set(peerIDs.map { $0.lowercased() })))
+            resendPendingMessages()
+            resendPendingFriendRemovals()
         } else if type == "friend-presence",
                   let peerID = json["peerID"] as? String,
                   let isOnline = json["online"] as? Bool {
@@ -494,6 +673,33 @@ final class PublicPetInteractionService: PetInteractionService {
             connectionContinuation.yield(.friendRequestRejected(requestID: requestID))
         } else if type == "friend-request-failed", let message = json["message"] as? String {
             connectionContinuation.yield(.friendRequestFailed(message: message))
+        } else if type == "friend-removed", let peerID = json["peerID"] as? String {
+            let normalizedPeerID = peerID.lowercased()
+            resolveFriendRemoval(peerID: normalizedPeerID, removed: true)
+            connectionContinuation.yield(.friendRemoved(peerID: normalizedPeerID))
+        } else if type == "friend-remove-failed", let peerID = json["peerID"] as? String {
+            resolveFriendRemoval(peerID: peerID.lowercased(), removed: false)
+        } else if type == "friend-message-incoming",
+                  let messageID = json["messageID"] as? String,
+                  let senderPeerID = json["senderPeerID"] as? String,
+                  let senderName = json["senderName"] as? String,
+                  let kindText = json["kind"] as? String,
+                  let kind = PetMessage.Kind(rawValue: kindText),
+                  let body = json["body"] as? String {
+            let receivedAt = (json["createdAt"] as? Double).map { Date(timeIntervalSince1970: $0 / 1000) } ?? .now
+            connectionContinuation.yield(.friendMessage(PetMessage(
+                id: messageID.lowercased(),
+                senderPeerID: senderPeerID.lowercased(),
+                senderName: senderName,
+                kind: kind,
+                body: body,
+                receivedAt: receivedAt
+            )))
+        } else if type == "friend-message-sent", let messageID = json["messageID"] as? String {
+            resolveMessageDelivery(messageID: messageID.lowercased(), result: .accepted)
+        } else if type == "friend-message-failed", let message = json["message"] as? String {
+            let messageID = (json["messageID"] as? String)?.lowercased() ?? ""
+            resolveMessageDelivery(messageID: messageID, result: .rejected(message: message))
         }
     }
 

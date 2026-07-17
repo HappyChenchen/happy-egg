@@ -4,6 +4,17 @@ import XCTest
 
 @MainActor
 final class PetViewTests: XCTestCase {
+    func testLongMessageBubbleLayoutStaysWithinViewWidthAndWrapsToMultipleLines() {
+        let bounds = NSRect(x: 0, y: 0, width: 220, height: 250)
+        let message = String(repeating: "长", count: 300)
+
+        let layout = PetView.bubbleLayout(for: message, in: bounds)
+
+        XCTAssertLessThanOrEqual(layout.bubbleRect.width, bounds.width)
+        XCTAssertGreaterThan(layout.bubbleRect.height, 28)
+        XCTAssertGreaterThan(layout.textRect.height, 14)
+    }
+
     func testDefaultSingleClickRespondsWithinThreeTenthsOfASecond() async throws {
         let view = PetView(frame: NSRect(x: 0, y: 0, width: 220, height: 250))
         let responded = expectation(description: "Single click responds quickly")

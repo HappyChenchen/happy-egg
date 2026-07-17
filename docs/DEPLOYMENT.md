@@ -21,6 +21,7 @@ docker compose -f deploy/compose.yaml up -d --build
 ```
 
 Caddy 会根据 `deploy/Caddyfile` 为域名申请证书，并把 `/ws` 与 `/health` 转发给 relay。
+Compose 同时为 Relay 设置 `MACPET_TRUST_PROXY=true`：Relay 只在这个显式开关开启时读取 Caddy 写入的 `X-Forwarded-For`，从而按真实客户端地址限流。不要在把 Relay 端口直接暴露到公网时开启该选项，否则客户端可自行伪造转发头。
 
 检查状态：
 
