@@ -2,6 +2,7 @@ import AppKit
 
 final class PetView: NSView {
     private static let defaultSingleClickDelay: TimeInterval = 0.22
+    private static let maximumBubbleTextHeight: CGFloat = 64
     private static let imageBundle: Bundle = {
         if let url = Bundle.main.url(forResource: "MacPet_MacPet", withExtension: "bundle"),
            let bundle = Bundle(url: url) {
@@ -19,6 +20,10 @@ final class PetView: NSView {
     var onAddFriend: (() -> Void)?
     var onResetPetCode: (() -> Void)?
     var onReviewFriendRequest: ((PetFriendRequest) -> Void)?
+    var onSendMessage: (() -> Void)?
+    var onSendSticker: ((PetSticker) -> Void)?
+    var onOpenMessage: ((PetMessage) -> Void)?
+    var onMarkMessagesRead: (() -> Void)?
     var friends: [PetPeer] = []
     var onlineFriendPeerIDs: Set<String> = []
     var onSelectFriend: ((PetPeer) -> Void)?
@@ -28,6 +33,8 @@ final class PetView: NSView {
     var petName = "我的宠物"
     var petCode: String?
     var pendingFriendRequests: [PetFriendRequest] = []
+    var recentMessages: [PetMessage] = []
+    var unreadMessageCount = 0
     private var bubbleText: String?
     private var emotion: AppModel.Emotion = .idle
     private var frameIndex = BuddyFrames.initialIndex
@@ -37,6 +44,41 @@ final class PetView: NSView {
     private let singleClickDelay: TimeInterval
     private var mouseDownLocation: NSPoint?
     private var didDrag = false
+
+    static func bubbleLayout(for text: String, in bounds: NSRect) -> (bubbleRect: NSRect, textRect: NSRect) {
+        let maximumBubbleWidth = max(44, bounds.width - 16)
+        let maximumTextWidth = max(24, maximumBubbleWidth - 20)
+        let measured = (text as NSString).boundingRect(
+            with: NSSize(width: maximumTextWidth, height: .greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            attributes: bubbleAttributes
+        )
+        let textWidth = min(maximumTextWidth, max(24, ceil(measured.width)))
+        let textHeight = min(maximumBubbleTextHeight, max(14, ceil(measured.height)))
+        let bubbleWidth = min(maximumBubbleWidth, textWidth + 20)
+        let bubbleHeight = max(28, textHeight + 14)
+        let centeredX = bounds.midX - bubbleWidth / 2
+        let bubbleX = min(max(bounds.minX, centeredX), bounds.maxX - bubbleWidth)
+        let bubbleRect = NSRect(x: bubbleX, y: 12, width: bubbleWidth, height: bubbleHeight)
+        let textRect = NSRect(
+            x: bubbleRect.minX + 10,
+            y: bubbleRect.minY + 7,
+            width: bubbleRect.width - 20,
+            height: bubbleRect.height - 14
+        )
+        return (bubbleRect, textRect)
+    }
+
+    private static var bubbleAttributes: [NSAttributedString.Key: Any] {
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.alignment = .center
+        paragraph.lineBreakMode = .byWordWrapping
+        return [
+            .font: NSFont.systemFont(ofSize: 12, weight: .medium),
+            .foregroundColor: NSColor.labelColor,
+            .paragraphStyle: paragraph
+        ]
+    }
 
     init(frame frameRect: NSRect, singleClickDelay: TimeInterval = PetView.defaultSingleClickDelay) {
         self.singleClickDelay = singleClickDelay
@@ -187,6 +229,38 @@ final class PetView: NSView {
             requestsItem.submenu = requestsMenu
             menu.addItem(requestsItem)
         }
+        if !recentMessages.isEmpty {
+            let title = unreadMessageCount > 0 ? "消息记录（\(unreadMessageCount) 未读）" : "消息记录"
+            let messagesItem = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+            let messagesMenu = NSMenu()
+            for message in recentMessages.prefix(12) {
+                let item = NSMenuItem(title: "", action: #selector(openMessage(_:)), keyEquivalent: "")
+                let dot = NSMutableAttributedString(
+                    string: message.isRead ? "○  " : "●  ",
+                    attributes: [
+                        .font: NSFont.systemFont(ofSize: 7, weight: .bold),
+                        .foregroundColor: message.isRead ? NSColor.tertiaryLabelColor : NSColor.systemBlue
+                    ]
+                )
+                dot.append(NSAttributedString(
+                    string: "\(message.senderName)：\(String(message.preview.prefix(18)))",
+                    attributes: [
+                        .font: NSFont.systemFont(ofSize: 13, weight: message.isRead ? .regular : .medium),
+                        .foregroundColor: NSColor.labelColor
+                    ]
+                ))
+                item.attributedTitle = dot
+                item.representedObject = message.id
+                item.target = self
+                messagesMenu.addItem(item)
+            }
+            messagesMenu.addItem(NSMenuItem.separator())
+            let readAll = messagesMenu.addItem(withTitle: "全部标为已读", action: #selector(markMessagesRead), keyEquivalent: "")
+            readAll.target = self
+            readAll.isEnabled = unreadMessageCount > 0
+            messagesItem.submenu = messagesMenu
+            menu.addItem(messagesItem)
+        }
         if !friends.isEmpty {
             let deleteItem = menu.addItem(withTitle: "删除好友…", action: #selector(removeFriend), keyEquivalent: "")
             deleteItem.attributedTitle = NSAttributedString(
@@ -209,10 +283,21 @@ final class PetView: NSView {
                 menu.addItem(withTitle: "送一颗爱心", action: #selector(sendHeart), keyEquivalent: "")
                 menu.addItem(withTitle: "一起庆祝", action: #selector(celebrate), keyEquivalent: "")
             } else {
-                let unavailableItem = NSMenuItem(title: "好友不在线，暂时无法互动", action: nil, keyEquivalent: "")
+                let unavailableItem = NSMenuItem(title: "好友不在线，可留言或送贴纸", action: nil, keyEquivalent: "")
                 unavailableItem.isEnabled = false
                 menu.addItem(unavailableItem)
             }
+            menu.addItem(withTitle: "给 \(pairedFriend.name) 留言…", action: #selector(sendMessage), keyEquivalent: "")
+            let stickerItem = NSMenuItem(title: "送贴纸给 \(pairedFriend.name)", action: nil, keyEquivalent: "")
+            let stickerMenu = NSMenu()
+            for sticker in PetSticker.allCases {
+                let item = NSMenuItem(title: "\(sticker.glyph)  \(sticker.title)", action: #selector(sendSticker(_:)), keyEquivalent: "")
+                item.representedObject = sticker.identifier
+                item.target = self
+                stickerMenu.addItem(item)
+            }
+            stickerItem.submenu = stickerMenu
+            menu.addItem(stickerItem)
         } else {
             let hint = NSMenuItem(title: "选择好友或添加新好友", action: nil, keyEquivalent: "")
             hint.isEnabled = false
@@ -240,15 +325,14 @@ final class PetView: NSView {
         super.draw(dirtyRect)
 
         if let bubbleText {
-            let attributes: [NSAttributedString.Key: Any] = [
-                .font: NSFont.systemFont(ofSize: 12, weight: .medium),
-                .foregroundColor: NSColor.labelColor
-            ]
-            let textSize = bubbleText.size(withAttributes: attributes)
-            let bubbleRect = NSRect(x: bounds.midX - textSize.width / 2 - 10, y: 12, width: textSize.width + 20, height: 28)
+            let layout = Self.bubbleLayout(for: bubbleText, in: bounds)
             NSColor.windowBackgroundColor.withAlphaComponent(0.94).setFill()
-            NSBezierPath(roundedRect: bubbleRect, xRadius: 14, yRadius: 14).fill()
-            bubbleText.draw(at: NSPoint(x: bubbleRect.minX + 10, y: bubbleRect.minY + 7), withAttributes: attributes)
+            NSBezierPath(roundedRect: layout.bubbleRect, xRadius: 14, yRadius: 14).fill()
+            (bubbleText as NSString).draw(
+                with: layout.textRect,
+                options: [.usesLineFragmentOrigin, .usesFontLeading, .truncatesLastVisibleLine],
+                attributes: Self.bubbleAttributes
+            )
         }
 
         guard let image = currentImage else { return }
@@ -301,6 +385,17 @@ final class PetView: NSView {
         onSelectFriend?(friend)
     }
     @objc private func editProfile() { onEditProfile?() }
+    @objc private func sendMessage() { onSendMessage?() }
+    @objc private func sendSticker(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String, let sticker = PetSticker(rawValue: id) else { return }
+        onSendSticker?(sticker)
+    }
+    @objc private func openMessage(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String,
+              let message = recentMessages.first(where: { $0.id == id }) else { return }
+        onOpenMessage?(message)
+    }
+    @objc private func markMessagesRead() { onMarkMessagesRead?() }
 
     private var confirmedFriend: PetPeer? {
         guard let pairedFriend,

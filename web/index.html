@@ -52,6 +52,16 @@
             <button class="menu-action action-celebrate" data-kind="celebrate" type="button" disabled><span>✦</span>庆祝</button>
           </div>
           <div class="menu-divider"></div>
+          <div class="menu-label">留言与贴纸（离线也能送）</div>
+          <div class="menu-message-row">
+            <input id="message-input" maxlength="600" placeholder="给好友留言…" autocomplete="off" aria-label="留言内容" />
+            <button class="menu-connect" id="send-message-button" type="button" disabled>留言</button>
+          </div>
+          <div class="sticker-row" id="sticker-row" aria-label="贴纸"></div>
+          <div class="menu-divider"></div>
+          <div class="menu-label">消息记录</div>
+          <div class="message-history" id="message-history" aria-live="polite"></div>
+          <div class="menu-divider"></div>
           <div class="menu-label">大小</div>
           <div class="scale-row" aria-label="宠物大小">
             <button class="scale-option" data-scale="small" type="button">小</button>

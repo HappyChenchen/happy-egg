@@ -16,6 +16,10 @@ final class PetPanelController {
         onAddFriend: @escaping () -> Void,
         onResetPetCode: @escaping () -> Void,
         onReviewFriendRequest: @escaping (PetFriendRequest) -> Void,
+        onSendMessage: @escaping () -> Void,
+        onSendSticker: @escaping (PetSticker) -> Void,
+        onOpenMessage: @escaping (PetMessage) -> Void,
+        onMarkMessagesRead: @escaping () -> Void,
         onSelectFriend: @escaping (PetPeer) -> Void,
         onRemoveFriend: @escaping () -> Void,
         onEditProfile: @escaping () -> Void
@@ -30,6 +34,10 @@ final class PetPanelController {
         petView.onAddFriend = onAddFriend
         petView.onResetPetCode = onResetPetCode
         petView.onReviewFriendRequest = onReviewFriendRequest
+        petView.onSendMessage = onSendMessage
+        petView.onSendSticker = onSendSticker
+        petView.onOpenMessage = onOpenMessage
+        petView.onMarkMessagesRead = onMarkMessagesRead
         petView.onSelectFriend = onSelectFriend
         petView.onRemoveFriend = onRemoveFriend
         petView.onEditProfile = onEditProfile
@@ -51,13 +59,15 @@ final class PetPanelController {
     func show() { panel.orderFrontRegardless() }
     func hide() { panel.orderOut(nil) }
     func setOrigin(_ origin: NSPoint) { panel.setFrameOrigin(origin) }
-    func render(text: String?, emotion: AppModel.Emotion, frameName: String, petName: String, petCode: String?, pendingFriendRequests: [PetFriendRequest], friends: [PetPeer], onlineFriendPeerIDs: Set<String>, pairedFriend: PetPeer?) {
+    func render(text: String?, emotion: AppModel.Emotion, frameName: String, petName: String, petCode: String?, pendingFriendRequests: [PetFriendRequest], recentMessages: [PetMessage], unreadMessageCount: Int, friends: [PetPeer], onlineFriendPeerIDs: Set<String>, pairedFriend: PetPeer?) {
         petView.friends = friends
         petView.onlineFriendPeerIDs = onlineFriendPeerIDs
         petView.pairedFriend = pairedFriend
         petView.petName = petName
         petView.petCode = petCode
         petView.pendingFriendRequests = pendingFriendRequests
+        petView.recentMessages = recentMessages
+        petView.unreadMessageCount = unreadMessageCount
         petView.render(text: text, emotion: emotion, frameName: frameName)
     }
 

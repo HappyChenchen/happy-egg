@@ -17,6 +17,8 @@ final class AppModel {
     private static let selectedFriendKey = "com.macpet.selected-friend-id"
     private static let authTokenKey = "com.macpet.auth-token"
     private static let petCodeKey = "com.macpet.pet-code"
+    private static let messagesKey = "com.macpet.messages"
+    private static let maxStoredMessages = 50
     private static let persistedKeys = [
         "com.macpet.peer-id",
         "com.macpet.pet-scale",
@@ -41,6 +43,7 @@ final class AppModel {
     private(set) var authToken: String
     private(set) var petCode: String?
     private(set) var pendingFriendRequests: [PetFriendRequest] = []
+    private(set) var messages: [PetMessage] = []
     private(set) var petName: String
     private(set) var petScale: PetScale
     var onStateChange: (() -> Void)?
@@ -75,6 +78,11 @@ final class AppModel {
         return pairedFriend
     }
 
+    var unreadMessageCount: Int { messages.reduce(0) { $0 + ($1.isRead ? 0 : 1) } }
+
+    /// Received messages ordered newest first for the friend message list.
+    var recentMessages: [PetMessage] { messages.sorted { $0.receivedAt > $1.receivedAt } }
+
     var activePairingCode: String? {
         guard let pairedFriend, pairedFriend.name == "配对码已创建" else { return nil }
         return pairedFriend.id
@@ -98,6 +106,9 @@ final class AppModel {
         if let data = defaults.data(forKey: "com.macpet.friends"), let saved = try? JSONDecoder().decode([PetPeer].self, from: data) {
             friends = Self.deduplicatedFriends(saved).filter { !Self.isSelfFriend($0, peerID: peerID, petName: petName) }
             if friends != saved { persistFriends() }
+        }
+        if let data = defaults.data(forKey: Self.messagesKey), let saved = try? JSONDecoder().decode([PetMessage].self, from: data) {
+            messages = Array(saved.suffix(Self.maxStoredMessages))
         }
         if let selectedID = defaults.string(forKey: Self.selectedFriendKey) {
             pairedFriend = friends.first { Self.selectionID(for: $0) == selectedID }
@@ -210,6 +221,11 @@ final class AppModel {
                     Task { await self.service.acknowledgeFriendRequest(id: requestID) }
                 case let .friendRequestFailed(message):
                     self.setState(text: Self.friendRequestErrorText(message), emotion: .idle, frameName: self.activeFrameName)
+                case let .friendRemoved(peerID):
+                    guard let friend = self.friends.first(where: { $0.peerID?.lowercased() == peerID.lowercased() }) else { continue }
+                    self.finishRemovingFriend(friend)
+                case let .friendMessage(message):
+                    self.receiveMessage(message)
                 }
             }
         }
@@ -217,6 +233,23 @@ final class AppModel {
     }
 
     func removeFriend(_ friend: PetPeer) {
+        guard let friendPeerID = friend.peerID?.lowercased() else {
+            finishRemovingFriend(friend)
+            return
+        }
+        let service = service
+        Task { [weak self] in
+            let removed = await service.removeFriend(peerID: friendPeerID)
+            guard let self else { return }
+            if removed {
+                self.finishRemovingFriend(friend)
+            } else {
+                self.setState(text: "删除好友失败，请联网后重试", emotion: .idle, frameName: self.activeFrameName)
+            }
+        }
+    }
+
+    private func finishRemovingFriend(_ friend: PetPeer) {
         let previousCount = friends.count
         friends.removeAll { Self.matchesFriend($0, friend) }
         guard friends.count != previousCount else { return }
@@ -344,6 +377,108 @@ final class AppModel {
             return
         }
         setState(text: outgoingText(for: kind, friendName: pairedFriend.name), emotion: .happy, frameName: safeFrame)
+    }
+
+    /// Sends a short text note or preset sticker to the current friend. Unlike pokes,
+    /// messages reach offline friends: the relay stores them until the friend returns.
+    func sendMessage(kind: PetMessage.Kind, body: String) async {
+        guard let friend = confirmedFriend, let targetPeerID = friend.peerID else {
+            setState(text: "请选择好友后再留言", emotion: .idle, frameName: activeFrameName)
+            return
+        }
+        let payload: String
+        switch kind {
+        case .text:
+            let normalized = PetMessage.normalizedText(body)
+            guard !normalized.isEmpty else {
+                setState(text: "留言不能为空", emotion: .idle, frameName: activeFrameName)
+                return
+            }
+            payload = normalized
+        case .sticker:
+            guard PetSticker(rawValue: body) != nil else {
+                setState(text: "贴纸无效", emotion: .idle, frameName: activeFrameName)
+                return
+            }
+            payload = body
+        }
+        let messageID = Self.makeProfileID()
+        let result = await service.sendMessage(to: targetPeerID, messageID: messageID, kind: kind, body: payload)
+        switch result {
+        case .accepted:
+            setState(
+                text: outgoingMessageText(kind: kind, body: payload, friendName: friend.name),
+                emotion: .happy,
+                frameName: activeFrameName
+            )
+        case let .rejected(message):
+            setState(text: Self.messageErrorText(message), emotion: .idle, frameName: activeFrameName)
+        case .transportFailure:
+            setState(text: "留言发送失败，正在重新连接", emotion: .idle, frameName: activeFrameName)
+        }
+    }
+
+    /// Shows a stored message as a bubble and marks it read.
+    func openMessage(_ message: PetMessage) {
+        markMessageRead(message.id)
+        setState(text: message.bubbleText(), emotion: .happy, frameName: activeFrameName)
+    }
+
+    func markAllMessagesRead() {
+        guard messages.contains(where: { !$0.isRead }) else { return }
+        for index in messages.indices { messages[index].isRead = true }
+        persistMessages()
+        onSocialStateChange?()
+    }
+
+    private func receiveMessage(_ message: PetMessage) {
+        let resolved = resolvedSenderMessage(message)
+        if messages.contains(where: { $0.id == resolved.id }) {
+            Task { await service.acknowledgeMessage(id: resolved.id) }
+            return
+        }
+        messages.append(resolved)
+        messages.sort { $0.receivedAt < $1.receivedAt }
+        if messages.count > Self.maxStoredMessages {
+            messages.removeFirst(messages.count - Self.maxStoredMessages)
+        }
+        persistMessages()
+        onSocialStateChange?()
+        setState(text: resolved.bubbleText(), emotion: .happy, frameName: activeFrameName)
+        Task { await service.acknowledgeMessage(id: resolved.id) }
+    }
+
+    /// Prefers the locally saved friend name over the name carried on the wire.
+    private func resolvedSenderMessage(_ message: PetMessage) -> PetMessage {
+        guard let name = friends.first(where: { $0.peerID?.lowercased() == message.senderPeerID.lowercased() })?.name,
+              name != message.senderName else { return message }
+        return PetMessage(
+            id: message.id,
+            senderPeerID: message.senderPeerID,
+            senderName: name,
+            kind: message.kind,
+            body: message.body,
+            receivedAt: message.receivedAt,
+            isRead: message.isRead
+        )
+    }
+
+    private func markMessageRead(_ id: String) {
+        guard let index = messages.firstIndex(where: { $0.id == id }), !messages[index].isRead else { return }
+        messages[index].isRead = true
+        persistMessages()
+        onSocialStateChange?()
+    }
+
+    private func persistMessages() {
+        if let data = try? JSONEncoder().encode(messages) { defaults.set(data, forKey: Self.messagesKey) }
+    }
+
+    private func outgoingMessageText(kind: PetMessage.Kind, body: String, friendName: String) -> String {
+        switch kind {
+        case .text: "已给 \(friendName) 留言"
+        case .sticker: "已发给 \(friendName) \(PetSticker(rawValue: body)?.glyph ?? "🎁")"
+        }
     }
 
     private func receive(_ event: PetEvent) {
@@ -514,6 +649,15 @@ final class AppModel {
         case "pet code not found": "没有找到这个宠物号"
         case "cannot add yourself": "不能添加自己的宠物"
         default: "好友申请失败，请稍后重试"
+        }
+    }
+
+    private static func messageErrorText(_ message: String) -> String {
+        switch message {
+        case "not friends": "对方不是你的好友"
+        case "rate limit": "留言太频繁，请稍后再试"
+        case "authentication required": "身份未就绪，请稍后重试"
+        default: "留言发送失败，请稍后重试"
         }
     }
 

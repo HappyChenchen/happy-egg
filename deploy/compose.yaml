@@ -4,6 +4,8 @@ services:
     restart: unless-stopped
     environment:
       MACPET_REGISTRY_PATH: /data/registry.json
+      # Relay is only reachable through the Caddy service in this network.
+      MACPET_TRUST_PROXY: "true"
     read_only: true
     security_opt:
       - no-new-privileges:true

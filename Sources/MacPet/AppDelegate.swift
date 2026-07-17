@@ -43,6 +43,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.confirmResetPetCode()
         } onReviewFriendRequest: { [weak self] request in
             self?.reviewFriendRequest(request)
+        } onSendMessage: { [weak self] in
+            self?.promptForMessage()
+        } onSendSticker: { [weak self] sticker in
+            Task { await self?.model.sendMessage(kind: .sticker, body: sticker.identifier) }
+        } onOpenMessage: { [weak self] message in
+            self?.showMessageDetails(message)
+        } onMarkMessagesRead: { [weak self] in
+            self?.model.markAllMessagesRead()
         } onSelectFriend: { [weak self] friend in
             Task { await self?.model.selectFriend(friend) }
         } onRemoveFriend: { [weak self] in
@@ -110,6 +118,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             petName: model.petName,
             petCode: model.petCode,
             pendingFriendRequests: model.pendingFriendRequests,
+            recentMessages: model.recentMessages,
+            unreadMessageCount: model.unreadMessageCount,
             friends: model.friends,
             onlineFriendPeerIDs: model.onlineFriendPeerIDs,
             pairedFriend: model.pairedFriend
@@ -151,6 +161,68 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         alert.window.initialFirstResponder = input
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         Task { await model.sendFriendRequest(code: input.stringValue) }
+    }
+
+    private func promptForMessage() {
+        guard let friend = model.confirmedFriend else { return }
+        let online = model.isFriendOnline(friend)
+        let alert = NSAlert()
+        alert.messageText = "给 \(friend.name) 留言"
+        alert.informativeText = online ? "对方在线，会马上收到。" : "对方当前离线，上线后会收到你的留言。"
+        let input = NSTextField(string: "")
+        input.placeholderString = "写点什么…"
+        input.font = NSFont.systemFont(ofSize: 15)
+        input.controlSize = .large
+        input.frame = NSRect(x: 0, y: 0, width: 360, height: 32)
+        alert.accessoryView = input
+        alert.addButton(withTitle: "发送")
+        alert.addButton(withTitle: "取消")
+        alert.window.initialFirstResponder = input
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        Task { await model.sendMessage(kind: .text, body: input.stringValue) }
+    }
+
+    private func showMessageDetails(_ message: PetMessage) {
+        model.openMessage(message)
+        let alert = NSAlert()
+        alert.messageText = message.senderName
+        alert.informativeText = message.kind == .text ? "收到的留言" : "收到的贴纸"
+        let scrollView = NSScrollView(frame: NSRect(x: 0, y: 0, width: 380, height: 160))
+        scrollView.hasVerticalScroller = true
+        scrollView.borderType = .bezelBorder
+        let textView = NSTextView(frame: scrollView.contentView.bounds)
+        textView.isEditable = false
+        textView.isSelectable = true
+        textView.isRichText = false
+        textView.drawsBackground = true
+        textView.backgroundColor = .textBackgroundColor
+        textView.font = NSFont.systemFont(ofSize: 14)
+        textView.textContainerInset = NSSize(width: 10, height: 10)
+        textView.minSize = NSSize(width: 0, height: scrollView.contentSize.height)
+        textView.maxSize = NSSize(
+            width: CGFloat.greatestFiniteMagnitude,
+            height: CGFloat.greatestFiniteMagnitude
+        )
+        textView.isHorizontallyResizable = false
+        textView.isVerticallyResizable = true
+        textView.autoresizingMask = [.width]
+        textView.textContainer?.widthTracksTextView = true
+        textView.textContainer?.containerSize = NSSize(
+            width: scrollView.contentSize.width,
+            height: CGFloat.greatestFiniteMagnitude
+        )
+        switch message.kind {
+        case .text:
+            textView.string = message.body
+        case .sticker:
+            textView.alignment = .center
+            textView.font = NSFont.systemFont(ofSize: 42)
+            textView.string = PetSticker(rawValue: message.body)?.glyph ?? "🎁"
+        }
+        scrollView.documentView = textView
+        alert.accessoryView = scrollView
+        alert.addButton(withTitle: "关闭")
+        alert.runModal()
     }
 
     private func copyPetCode() {
